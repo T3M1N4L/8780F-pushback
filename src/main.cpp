@@ -8,21 +8,11 @@
 // Create robodash console
 rd::Console console("Console", &controller);
 
-/**
- * @brief Do nothing autonomous
- */
-void doNothing() {
-    console.println("Do Nothing auton selected - robot inactive");
-}
-
-// Create robodash selector with autonomous routines from autonRoutines.h
-// Format: {"Name", function, "image_path", color_hue}
-// color_hue: 0=red, 60=yellow, 120=green, 180=cyan, 220=blue, 300=magenta
+// Keep auton configuration in main.cpp like the previous workflow.
 rd::Selector selector({
-    {"Angular Test Auton", angular_test_auton, "", 60},
-    {"Lateral Test Auton", lateral_test_auton, "", 300},
-    {"Skills Auton", skills_auton, "", 180},
-
+    {"Angular Test Auton", angular_test_auton, "", 60, "Heading turn diagnostic", 15000, "angular_test"},
+    {"Lateral Test Auton", lateral_test_auton, "", 300, "Linear drive diagnostic", 15000, "lateral_test"},
+    {"Skills Auton", skills_auton, "", 180, "Full skills run", 60000, "skills"},
 }, &controller);
 
 // Create image widget
@@ -125,13 +115,6 @@ void initialize() {
         }
     });
     
-    // Background task to update selector (for controller navigation)
-    pros::Task selectorTask([&]() {
-        while (true) {
-            selector.update();
-            pros::delay(50); // Update every 50ms
-        }
-    });
 }
 
 /**
@@ -144,7 +127,6 @@ void disabled() {}
  * Use this to focus the selector on screen
  */
 void competition_initialize() {
-    // Show the auton selector on screen when connected to competition switch
     selector.focus();
 }
 

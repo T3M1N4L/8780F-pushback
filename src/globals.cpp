@@ -18,12 +18,12 @@ pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ------------------------------Drivetrain--------------------------------
 pros::MotorGroup rightMotors({-9, // front most motor (port 8)
-                             8, // top middle motor (port 9) [reversed]
-                             7  // middle motor (port 10)
+                             8,   // top middle motor (port 9) [reversed]
+                             7    // middle motor (port 10)
 }, pros::MotorGears::blue); 
-pros::MotorGroup leftMotors({2, // front most motor (port 1)
+pros::MotorGroup leftMotors({2,   // front most motor (port 1)
                               -3, // top middle motor (port 2) [reversed]
-                             -4  // middle motor (port 3)
+                             -4   // middle motor (port 3)
 }, pros::MotorGears::blue);
 
 // drivetrain settings

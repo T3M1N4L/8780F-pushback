@@ -1,468 +1,786 @@
 #include "robodash/views/selector.hpp"
-#include "pros/misc.hpp"
+
 #include "robodash/apix.h"
-#include "robodash/impl/styles.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <cstring>
 
-const char *file_name = "/usd/rd_auton.txt";
+namespace {
 
-// ============================= SD Card Saving ============================= //
+const char* kSaveFile = "/usd/rd_auton.txt";
+
+namespace colors {
+static const lv_color_t screen_bg = lv_color_hex(0x000000);
+static const lv_color_t panel_bg = lv_color_hex(0x050505);
+static const lv_color_t divider = lv_color_hex(0x0f0f0f);
+static const lv_color_t card_border = lv_color_hex(0x131313);
+static const lv_color_t inactive_border = lv_color_hex(0x1a1a1a);
+static const lv_color_t selected_text = lv_color_hex(0xffffff);
+static const lv_color_t unselected_name = lv_color_hex(0x555555);
+static const lv_color_t selected_sub = lv_color_hex(0x2a2a2a);
+static const lv_color_t unselected_sub = lv_color_hex(0x1a1a1a);
+static const lv_color_t section_header = lv_color_hex(0x1e1e1e);
+static const lv_color_t disabled_icon = lv_color_hex(0x181818);
+static const lv_color_t red = lv_color_hex(0xf87171);
+static const lv_color_t blue = lv_color_hex(0x60a5fa);
+static const lv_color_t green = lv_color_hex(0x22c55e);
+static const lv_color_t amber = lv_color_hex(0xf59e0b);
+static const lv_color_t idle = lv_color_hex(0x252525);
+static const lv_color_t dark_btn_bg = lv_color_hex(0x070707);
+static const lv_color_t card_bg = lv_color_hex(0x080808);
+} // namespace colors
+
+struct ScopedMutex {
+    explicit ScopedMutex(pros::Mutex& m) : mutex(m) { mutex.take(TIMEOUT_MAX); }
+    ~ScopedMutex() { mutex.give(); }
+    pros::Mutex& mutex;
+};
+
+std::string to_upper_copy(const std::string& text) {
+    std::string out = text;
+    for (char& c : out) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return out;
+}
+
+void apply_button_enabled_style(lv_obj_t* btn, lv_obj_t* icon, bool enabled, lv_color_t active_color) {
+    if (enabled) {
+        lv_obj_set_style_border_color(btn, active_color, 0);
+        lv_obj_set_style_border_opa(btn, LV_OPA_27, 0);
+        lv_obj_set_style_text_color(icon, active_color, 0);
+    } else {
+        lv_obj_set_style_border_color(btn, lv_color_hex(0x111111), 0);
+        lv_obj_set_style_border_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(icon, colors::disabled_icon, 0);
+    }
+}
+
+} // namespace
+
+rd::Selector::Selector(std::vector<routine_t> autons, pros::Controller* controller)
+    : Selector("Auton Selector", autons, controller) {}
+
+rd::Selector::Selector(std::string selector_name, std::vector<routine_t> autons, pros::Controller* controller)
+    : view(nullptr),
+      controller(controller),
+      left_panel(nullptr),
+      right_panel(nullptr),
+      grid(nullptr),
+      selected_name_label(nullptr),
+      selected_sub_label(nullptr),
+      alliance_red_btn(nullptr),
+      alliance_blue_btn(nullptr),
+      alliance_red_txt(nullptr),
+      alliance_blue_txt(nullptr),
+      transport_state_label(nullptr),
+      transport_bar(nullptr),
+      timer_elapsed_label(nullptr),
+      timer_suffix_label(nullptr),
+      play_btn(nullptr),
+      pause_btn(nullptr),
+      stop_btn(nullptr),
+      play_icon(nullptr),
+      pause_icon(nullptr),
+      stop_icon(nullptr),
+      transport_timer(nullptr),
+      name(selector_name),
+      selected_routine(nullptr),
+      alliance(Alliance::NONE),
+      transport_state(TransportState::IDLE),
+      selected_index(-1),
+      saved_elapsed(0),
+      elapsed(0),
+      start_tick(0) {
+    routines = autons;
+
+    for (routine_t& routine : routines) {
+        if (routine.id.empty()) {
+            routine.id = to_routine_id(routine);
+        }
+        if (routine.sub.empty()) {
+            routine.sub = "No description";
+        }
+    }
+
+    view = rd_view_create(name.c_str());
+    lv_obj_t* root = view->obj;
+    lv_obj_set_style_bg_color(root, colors::screen_bg, 0);
+    lv_obj_set_style_pad_all(root, 0, 0);
+
+    create_left_panel();
+    create_right_panel();
+
+    if (pros::usd::is_installed()) sd_load();
+    refresh_selection_styles();
+}
+
+void rd::Selector::create_left_panel() {
+    lv_obj_t* root = view->obj;
+
+    left_panel = lv_obj_create(root);
+    lv_obj_set_pos(left_panel, 0, 0);
+    lv_obj_set_size(left_panel, 148, 240);
+    lv_obj_set_style_bg_color(left_panel, colors::panel_bg, 0);
+    lv_obj_set_style_border_width(left_panel, 1, 0);
+    lv_obj_set_style_border_side(left_panel, LV_BORDER_SIDE_RIGHT, 0);
+    lv_obj_set_style_border_color(left_panel, colors::inactive_border, 0);
+    lv_obj_set_style_radius(left_panel, 0, 0);
+    lv_obj_set_style_pad_all(left_panel, 0, 0);
+    lv_obj_clear_flag(left_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    const int pad = 12;
+    int y = 12;
+
+    lv_obj_t* selected_hdr = lv_label_create(left_panel);
+    lv_label_set_text(selected_hdr, "SELECTED");
+    lv_obj_set_pos(selected_hdr, pad, y);
+    lv_obj_set_style_text_font(selected_hdr, &lv_font_montserrat_8, 0);
+    lv_obj_set_style_text_color(selected_hdr, colors::section_header, 0);
+    lv_obj_set_style_text_letter_space(selected_hdr, 3, 0);
+
+    y += 20;
+    selected_name_label = lv_label_create(left_panel);
+    lv_label_set_text(selected_name_label, "-");
+    lv_obj_set_pos(selected_name_label, pad, y);
+    lv_obj_set_style_text_font(selected_name_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(selected_name_label, colors::inactive_border, 0);
+
+    y += 24;
+    selected_sub_label = lv_label_create(left_panel);
+    lv_label_set_text(selected_sub_label, "");
+    lv_obj_set_pos(selected_sub_label, pad, y);
+    lv_obj_set_style_text_font(selected_sub_label, &lv_font_montserrat_8, 0);
+    lv_obj_set_style_text_color(selected_sub_label, colors::selected_sub, 0);
+    lv_obj_add_flag(selected_sub_label, LV_OBJ_FLAG_HIDDEN);
+
+    y += 18;
+    lv_obj_t* divider1 = lv_obj_create(left_panel);
+    lv_obj_set_pos(divider1, 0, y);
+    lv_obj_set_size(divider1, 148, 1);
+    lv_obj_set_style_bg_color(divider1, colors::divider, 0);
+    lv_obj_set_style_border_width(divider1, 0, 0);
+    lv_obj_set_style_radius(divider1, 0, 0);
+
+    y += 11;
+    lv_obj_t* alliance_hdr = lv_label_create(left_panel);
+    lv_label_set_text(alliance_hdr, "ALLIANCE");
+    lv_obj_set_pos(alliance_hdr, pad, y);
+    lv_obj_set_style_text_font(alliance_hdr, &lv_font_montserrat_8, 0);
+    lv_obj_set_style_text_color(alliance_hdr, colors::section_header, 0);
+
+    y += 14;
+    alliance_red_btn = lv_btn_create(left_panel);
+    lv_obj_set_pos(alliance_red_btn, pad, y);
+    lv_obj_set_size(alliance_red_btn, 55, 32);
+    lv_obj_set_style_radius(alliance_red_btn, 4, 0);
+    lv_obj_set_style_border_width(alliance_red_btn, 1, 0);
+    lv_obj_set_style_bg_color(alliance_red_btn, colors::card_bg, 0);
+    lv_obj_set_style_border_color(alliance_red_btn, colors::inactive_border, 0);
+    lv_obj_set_user_data(alliance_red_btn, this);
+    lv_obj_add_event_cb(alliance_red_btn, alliance_cb, LV_EVENT_CLICKED, reinterpret_cast<void*>(1));
+
+    alliance_red_txt = lv_label_create(alliance_red_btn);
+    lv_label_set_text(alliance_red_txt, "RED");
+    lv_obj_center(alliance_red_txt);
+    lv_obj_set_style_text_font(alliance_red_txt, &lv_font_montserrat_10, 0);
+
+    alliance_blue_btn = lv_btn_create(left_panel);
+    lv_obj_set_pos(alliance_blue_btn, pad + 61, y);
+    lv_obj_set_size(alliance_blue_btn, 55, 32);
+    lv_obj_set_style_radius(alliance_blue_btn, 4, 0);
+    lv_obj_set_style_border_width(alliance_blue_btn, 1, 0);
+    lv_obj_set_style_bg_color(alliance_blue_btn, colors::card_bg, 0);
+    lv_obj_set_style_border_color(alliance_blue_btn, colors::inactive_border, 0);
+    lv_obj_set_user_data(alliance_blue_btn, this);
+    lv_obj_add_event_cb(alliance_blue_btn, alliance_cb, LV_EVENT_CLICKED, reinterpret_cast<void*>(2));
+
+    alliance_blue_txt = lv_label_create(alliance_blue_btn);
+    lv_label_set_text(alliance_blue_txt, "BLUE");
+    lv_obj_center(alliance_blue_txt);
+    lv_obj_set_style_text_font(alliance_blue_txt, &lv_font_montserrat_10, 0);
+
+    y += 42;
+    lv_obj_t* divider2 = lv_obj_create(left_panel);
+    lv_obj_set_pos(divider2, 0, y);
+    lv_obj_set_size(divider2, 148, 1);
+    lv_obj_set_style_bg_color(divider2, colors::divider, 0);
+    lv_obj_set_style_border_width(divider2, 0, 0);
+    lv_obj_set_style_radius(divider2, 0, 0);
+
+    y += 11;
+    lv_obj_t* transport_hdr = lv_label_create(left_panel);
+    lv_label_set_text(transport_hdr, "TRANSPORT");
+    lv_obj_set_pos(transport_hdr, pad, y);
+    lv_obj_set_style_text_font(transport_hdr, &lv_font_montserrat_8, 0);
+    lv_obj_set_style_text_color(transport_hdr, colors::section_header, 0);
+
+    transport_state_label = lv_label_create(left_panel);
+    lv_label_set_text(transport_state_label, "IDLE");
+    lv_obj_set_style_text_font(transport_state_label, &lv_font_montserrat_8, 0);
+    lv_obj_set_style_text_color(transport_state_label, colors::idle, 0);
+    lv_obj_align_to(transport_state_label, transport_hdr, LV_ALIGN_OUT_RIGHT_MID, 36, 0);
+
+    y += 16;
+    transport_bar = lv_bar_create(left_panel);
+    lv_obj_set_pos(transport_bar, pad, y);
+    lv_obj_set_size(transport_bar, 124, 3);
+    lv_obj_set_style_bg_color(transport_bar, colors::divider, 0);
+    lv_obj_set_style_bg_color(transport_bar, colors::idle, LV_PART_INDICATOR);
+    lv_bar_set_range(transport_bar, 0, 100);
+
+    y += 11;
+    timer_elapsed_label = lv_label_create(left_panel);
+    lv_label_set_text(timer_elapsed_label, "00:00.0");
+    lv_obj_set_pos(timer_elapsed_label, pad, y);
+    lv_obj_set_style_text_font(timer_elapsed_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(timer_elapsed_label, colors::idle, 0);
+
+    timer_suffix_label = lv_label_create(left_panel);
+    lv_label_set_text(timer_suffix_label, " / 00:15.0");
+    lv_obj_set_style_text_font(timer_suffix_label, &lv_font_montserrat_8, 0);
+    lv_obj_set_style_text_color(timer_suffix_label, colors::unselected_sub, 0);
+    lv_obj_align_to(timer_suffix_label, timer_elapsed_label, LV_ALIGN_OUT_RIGHT_BOTTOM, 4, -3);
+
+    y += 31;
+    play_btn = lv_btn_create(left_panel);
+    lv_obj_set_pos(play_btn, pad, y);
+    lv_obj_set_size(play_btn, 39, 36);
+    lv_obj_set_style_radius(play_btn, 4, 0);
+    lv_obj_set_style_bg_color(play_btn, colors::dark_btn_bg, 0);
+    lv_obj_set_style_border_width(play_btn, 1, 0);
+    lv_obj_set_user_data(play_btn, this);
+    lv_obj_add_event_cb(play_btn, play_cb, LV_EVENT_CLICKED, nullptr);
+    play_icon = lv_label_create(play_btn);
+    lv_label_set_text(play_icon, LV_SYMBOL_PLAY);
+    lv_obj_center(play_icon);
+
+    pause_btn = lv_btn_create(left_panel);
+    lv_obj_set_pos(pause_btn, pad + 43, y);
+    lv_obj_set_size(pause_btn, 39, 36);
+    lv_obj_set_style_radius(pause_btn, 4, 0);
+    lv_obj_set_style_bg_color(pause_btn, colors::dark_btn_bg, 0);
+    lv_obj_set_style_border_width(pause_btn, 1, 0);
+    lv_obj_set_user_data(pause_btn, this);
+    lv_obj_add_event_cb(pause_btn, pause_cb, LV_EVENT_CLICKED, nullptr);
+    pause_icon = lv_label_create(pause_btn);
+    lv_label_set_text(pause_icon, LV_SYMBOL_PAUSE);
+    lv_obj_center(pause_icon);
+
+    stop_btn = lv_btn_create(left_panel);
+    lv_obj_set_pos(stop_btn, pad + 86, y);
+    lv_obj_set_size(stop_btn, 39, 36);
+    lv_obj_set_style_radius(stop_btn, 4, 0);
+    lv_obj_set_style_bg_color(stop_btn, colors::dark_btn_bg, 0);
+    lv_obj_set_style_border_width(stop_btn, 1, 0);
+    lv_obj_set_user_data(stop_btn, this);
+    lv_obj_add_event_cb(stop_btn, stop_cb, LV_EVENT_CLICKED, nullptr);
+    stop_icon = lv_label_create(stop_btn);
+    lv_label_set_text(stop_icon, LV_SYMBOL_STOP);
+    lv_obj_center(stop_icon);
+}
+
+void rd::Selector::create_right_panel() {
+    lv_obj_t* root = view->obj;
+
+    right_panel = lv_obj_create(root);
+    lv_obj_set_pos(right_panel, 148, 0);
+    lv_obj_set_size(right_panel, 332, 240);
+    lv_obj_set_style_bg_color(right_panel, colors::panel_bg, 0);
+    lv_obj_set_style_border_width(right_panel, 0, 0);
+    lv_obj_set_style_radius(right_panel, 0, 0);
+    lv_obj_set_style_pad_all(right_panel, 0, 0);
+    lv_obj_clear_flag(right_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    grid = lv_obj_create(right_panel);
+    lv_obj_set_pos(grid, 10, 10);
+    lv_obj_set_size(grid, 312, 220);
+    lv_obj_set_style_bg_opa(grid, LV_OPA_0, 0);
+    lv_obj_set_style_border_width(grid, 0, 0);
+    lv_obj_set_style_pad_all(grid, 0, 0);
+    lv_obj_set_style_pad_column(grid, 5, 0);
+    lv_obj_set_style_pad_row(grid, 5, 0);
+    lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(grid, LV_LAYOUT_GRID);
+
+    const int n = static_cast<int>(routines.size());
+    const int cols = (n <= 2) ? 1 : ((n <= 4) ? 2 : 3);
+    const int rows = (n + cols - 1) / cols;
+
+    static std::vector<lv_coord_t> col_dsc;
+    static std::vector<lv_coord_t> row_dsc;
+    col_dsc.assign(static_cast<size_t>(cols + 1), LV_GRID_TEMPLATE_LAST);
+    row_dsc.assign(static_cast<size_t>(rows + 1), LV_GRID_TEMPLATE_LAST);
+    for (int i = 0; i < cols; i++) col_dsc[static_cast<size_t>(i)] = LV_GRID_FR(1);
+    for (int i = 0; i < rows; i++) row_dsc[static_cast<size_t>(i)] = LV_GRID_FR(1);
+    lv_obj_set_grid_dsc_array(grid, col_dsc.data(), row_dsc.data());
+
+    const int pad = (n <= 2) ? 14 : ((n <= 4) ? 11 : 9);
+    const lv_font_t* name_font = (n <= 2) ? &lv_font_montserrat_16 : ((n <= 4) ? &lv_font_montserrat_14 : &lv_font_montserrat_12);
+
+    cards.resize(static_cast<size_t>(n));
+    for (int i = 0; i < n; i++) {
+        CardRefs card;
+        card.btn = lv_btn_create(grid);
+        lv_obj_set_style_radius(card.btn, 6, 0);
+        lv_obj_set_style_bg_color(card.btn, colors::card_bg, 0);
+        lv_obj_set_style_border_width(card.btn, 1, 0);
+        lv_obj_set_style_border_color(card.btn, colors::card_border, 0);
+        lv_obj_set_style_pad_all(card.btn, pad, 0);
+        lv_obj_set_style_pad_row(card.btn, 4, 0);
+        lv_obj_set_user_data(card.btn, this);
+        lv_obj_add_event_cb(card.btn, card_cb, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+
+        const int row = i / cols;
+        const int col = i % cols;
+        int span = 1;
+        if ((n % cols == 1) && (i == n - 1)) span = cols;
+        lv_obj_set_grid_cell(card.btn, LV_GRID_ALIGN_STRETCH, col, span, LV_GRID_ALIGN_STRETCH, row, 1);
+
+        lv_obj_set_layout(card.btn, LV_LAYOUT_FLEX);
+        lv_obj_set_flex_flow(card.btn, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(card.btn, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+
+        card.name = lv_label_create(card.btn);
+        lv_obj_set_width(card.name, lv_pct(100));
+        lv_label_set_long_mode(card.name, LV_LABEL_LONG_WRAP);
+        lv_label_set_text(card.name, routines[static_cast<size_t>(i)].name.c_str());
+        lv_obj_set_style_text_font(card.name, name_font, 0);
+
+        card.sub = lv_label_create(card.btn);
+        lv_obj_set_width(card.sub, lv_pct(100));
+        lv_label_set_long_mode(card.sub, LV_LABEL_LONG_WRAP);
+        lv_label_set_text(card.sub, routines[static_cast<size_t>(i)].sub.c_str());
+        lv_obj_set_style_text_font(card.sub, &lv_font_montserrat_8, 0);
+
+        cards[static_cast<size_t>(i)] = card;
+    }
+}
+
+lv_color_t rd::Selector::current_accent() const {
+    if (alliance == Alliance::BLUE) return colors::blue;
+    return colors::red;
+}
+
+int rd::Selector::current_duration() const {
+    if (selected_index < 0 || selected_index >= static_cast<int>(routines.size())) return 15000;
+    return static_cast<int>(routines[static_cast<size_t>(selected_index)].duration_ms);
+}
+
+std::string rd::Selector::to_routine_id(const routine_t& routine) const {
+    std::string id;
+    for (char c : routine.name) {
+        if (std::isalnum(static_cast<unsigned char>(c))) {
+            id.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        } else if (c == ' ' || c == '-' || c == '_') {
+            if (id.empty() || id.back() == '_') continue;
+            id.push_back('_');
+        }
+    }
+    if (id.empty()) id = "auton";
+    return id;
+}
+
+void rd::Selector::update_selected_panel() {
+    if (selected_index < 0 || selected_routine == nullptr) {
+        lv_label_set_text(selected_name_label, "-");
+        lv_obj_set_style_text_color(selected_name_label, colors::inactive_border, 0);
+        lv_obj_add_flag(selected_sub_label, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    const std::string upper = to_upper_copy(selected_routine->name);
+    lv_label_set_text(selected_name_label, upper.c_str());
+    lv_obj_set_style_text_color(selected_name_label, colors::selected_text, 0);
+
+    lv_label_set_text(selected_sub_label, selected_routine->sub.c_str());
+    lv_obj_clear_flag(selected_sub_label, LV_OBJ_FLAG_HIDDEN);
+}
+
+void rd::Selector::apply_card_unselected(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(cards.size())) return;
+    CardRefs& card = cards[static_cast<size_t>(idx)];
+
+    lv_obj_set_style_bg_color(card.btn, colors::card_bg, 0);
+    lv_obj_set_style_bg_opa(card.btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card.btn, colors::card_border, 0);
+    lv_obj_set_style_text_color(card.name, colors::unselected_name, 0);
+    lv_obj_set_style_text_color(card.sub, colors::unselected_sub, 0);
+    lv_obj_set_style_text_opa(card.sub, LV_OPA_COVER, 0);
+
+    if (card.top_bar != nullptr) {
+        lv_obj_del(card.top_bar);
+        card.top_bar = nullptr;
+    }
+}
+
+void rd::Selector::apply_card_selected(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(cards.size())) return;
+    CardRefs& card = cards[static_cast<size_t>(idx)];
+    const lv_color_t accent = current_accent();
+
+    lv_obj_set_style_bg_color(card.btn, accent, 0);
+    lv_obj_set_style_bg_opa(card.btn, LV_OPA_15, 0);
+    lv_obj_set_style_border_color(card.btn, accent, 0);
+    lv_obj_set_style_text_color(card.name, colors::selected_text, 0);
+    lv_obj_set_style_text_color(card.sub, colors::selected_text, 0);
+    lv_obj_set_style_text_opa(card.sub, LV_OPA_20, 0);
+
+    if (card.top_bar == nullptr) {
+        card.top_bar = lv_obj_create(card.btn);
+        lv_obj_set_size(card.top_bar, lv_pct(100), 2);
+        lv_obj_align(card.top_bar, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_set_style_radius(card.top_bar, 0, 0);
+        lv_obj_set_style_border_width(card.top_bar, 0, 0);
+        lv_obj_clear_flag(card.top_bar, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(card.top_bar, LV_OBJ_FLAG_CLICKABLE);
+    }
+    lv_obj_set_style_bg_color(card.top_bar, accent, 0);
+}
+
+void rd::Selector::refresh_alliance_buttons() {
+    if (alliance == Alliance::RED) {
+        lv_obj_set_style_border_color(alliance_red_btn, colors::red, 0);
+        lv_obj_set_style_bg_color(alliance_red_btn, colors::red, 0);
+        lv_obj_set_style_bg_opa(alliance_red_btn, LV_OPA_15, 0);
+        lv_obj_set_style_text_color(alliance_red_txt, colors::selected_text, 0);
+    } else {
+        lv_obj_set_style_border_color(alliance_red_btn, colors::inactive_border, 0);
+        lv_obj_set_style_bg_color(alliance_red_btn, colors::card_bg, 0);
+        lv_obj_set_style_bg_opa(alliance_red_btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(alliance_red_txt, lv_color_hex(0x252525), 0);
+    }
+
+    if (alliance == Alliance::BLUE) {
+        lv_obj_set_style_border_color(alliance_blue_btn, colors::blue, 0);
+        lv_obj_set_style_bg_color(alliance_blue_btn, colors::blue, 0);
+        lv_obj_set_style_bg_opa(alliance_blue_btn, LV_OPA_15, 0);
+        lv_obj_set_style_text_color(alliance_blue_txt, colors::selected_text, 0);
+    } else {
+        lv_obj_set_style_border_color(alliance_blue_btn, colors::inactive_border, 0);
+        lv_obj_set_style_bg_color(alliance_blue_btn, colors::card_bg, 0);
+        lv_obj_set_style_bg_opa(alliance_blue_btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(alliance_blue_txt, lv_color_hex(0x252525), 0);
+    }
+}
+
+void rd::Selector::update_transport_buttons() {
+    const bool can_play = (selected_routine != nullptr) && (transport_state != TransportState::RUNNING);
+    const bool can_pause = transport_state == TransportState::RUNNING;
+    const bool can_stop = transport_state != TransportState::IDLE;
+
+    apply_button_enabled_style(play_btn, play_icon, can_play, colors::green);
+    apply_button_enabled_style(pause_btn, pause_icon, can_pause, colors::amber);
+    apply_button_enabled_style(stop_btn, stop_icon, can_stop, colors::red);
+}
+
+void rd::Selector::update_transport_labels() {
+    const int duration = std::max(1, current_duration());
+    const bool overtime = elapsed > static_cast<uint32_t>(duration);
+
+    lv_color_t state_color = colors::idle;
+    const char* state_text = "IDLE";
+    if (transport_state == TransportState::RUNNING && overtime) {
+        state_color = colors::red;
+        state_text = "OT";
+    } else if (transport_state == TransportState::RUNNING) {
+        state_color = colors::green;
+        state_text = "RUN";
+    } else if (transport_state == TransportState::PAUSED) {
+        state_color = colors::amber;
+        state_text = "PAUSE";
+    } else if (transport_state == TransportState::DONE) {
+        state_color = colors::red;
+        state_text = "DONE";
+    }
+
+    lv_label_set_text(transport_state_label, state_text);
+    lv_obj_set_style_text_color(transport_state_label, state_color, 0);
+    lv_obj_set_style_text_color(timer_elapsed_label, state_color, 0);
+    lv_obj_set_style_bg_color(transport_bar, state_color, LV_PART_INDICATOR);
+
+    const uint32_t shown_ms = overtime ? (elapsed - duration) : elapsed;
+    const uint32_t ds = shown_ms / 100;
+    const uint32_t m = ds / 600;
+    const uint32_t s = (ds / 10) % 60;
+    const uint32_t d = ds % 10;
+
+    char timer_text[24];
+    std::snprintf(timer_text, sizeof(timer_text), overtime ? "-%02lu:%02lu.%lu" : "%02lu:%02lu.%lu",
+                  static_cast<unsigned long>(m), static_cast<unsigned long>(s), static_cast<unsigned long>(d));
+    lv_label_set_text(timer_elapsed_label, timer_text);
+
+    const uint32_t dur_ds = static_cast<uint32_t>(duration) / 100;
+    const uint32_t dur_m = dur_ds / 600;
+    const uint32_t dur_s = (dur_ds / 10) % 60;
+    char suffix_text[24];
+    std::snprintf(suffix_text, sizeof(suffix_text), " / %02lu:%02lu.0", static_cast<unsigned long>(dur_m), static_cast<unsigned long>(dur_s));
+    lv_label_set_text(timer_suffix_label, suffix_text);
+
+    int pct = static_cast<int>((std::min(elapsed, static_cast<uint32_t>(duration)) * 100U) / static_cast<uint32_t>(duration));
+    if (overtime) pct = 100;
+    lv_bar_set_value(transport_bar, pct, LV_ANIM_OFF);
+}
+
+void rd::Selector::refresh_selection_styles() {
+    for (int i = 0; i < static_cast<int>(cards.size()); i++) {
+        if (i == selected_index) apply_card_selected(i);
+        else apply_card_unselected(i);
+    }
+    update_selected_panel();
+    refresh_alliance_buttons();
+    update_transport_labels();
+    update_transport_buttons();
+}
+
+void rd::Selector::stop_timer_task() {
+    if (transport_timer != nullptr) {
+        lv_timer_del(transport_timer);
+        transport_timer = nullptr;
+    }
+}
+
+void rd::Selector::stop_transport() {
+    stop_timer_task();
+    elapsed = 0;
+    saved_elapsed = 0;
+    transport_state = TransportState::IDLE;
+    lv_bar_set_value(transport_bar, 0, LV_ANIM_OFF);
+    update_transport_labels();
+    update_transport_buttons();
+}
+
+void rd::Selector::mark_done() {
+    if (transport_state == TransportState::RUNNING) {
+        elapsed = saved_elapsed + lv_tick_elaps(start_tick);
+        saved_elapsed = elapsed;
+    }
+    stop_timer_task();
+    transport_state = TransportState::DONE;
+    update_transport_labels();
+    update_transport_buttons();
+}
+
+void rd::Selector::select_index(int idx, bool save_selection) {
+    if (idx < 0 || idx >= static_cast<int>(routines.size())) return;
+
+    if (selected_index == idx) {
+        stop_transport();
+        if (save_selection) sd_save();
+        return;
+    }
+
+    if (selected_index >= 0) apply_card_unselected(selected_index);
+
+    selected_index = idx;
+    selected_routine = &routines[static_cast<size_t>(selected_index)];
+    apply_card_selected(selected_index);
+    update_selected_panel();
+    run_callbacks();
+
+    stop_transport();
+    if (save_selection) sd_save();
+}
 
 void rd::Selector::sd_save() {
-	FILE *save_file;
+    FILE* save_file = std::fopen(kSaveFile, "a");
+    if (save_file == nullptr) return;
+    std::fclose(save_file);
 
-	// Ensure the file exists
-	save_file = fopen(file_name, "a");
-	fclose(save_file);
+    save_file = std::fopen(kSaveFile, "r");
+    if (save_file == nullptr) return;
 
-	// Open in read mode
-	save_file = fopen(file_name, "r");
-	if (!save_file) return;
+    std::fseek(save_file, 0L, SEEK_END);
+    int file_size = static_cast<int>(std::ftell(save_file));
+    std::rewind(save_file);
 
-	// Get file size
-	fseek(save_file, 0L, SEEK_END);
-	int file_size = ftell(save_file);
-	rewind(save_file);
+    std::vector<char> new_text(static_cast<size_t>(std::max(file_size + 1, 1)), '\0');
+    char line[256];
+    char saved_selector[256];
 
-	char new_text[file_size];
-	char line[256];
-	char saved_selector[256];
+    while (std::fgets(line, sizeof(line), save_file)) {
+        saved_selector[0] = '\0';
+        std::sscanf(line, "%[^:]", saved_selector);
+        if (std::strcmp(saved_selector, name.c_str()) == 0) continue;
+        std::strncat(new_text.data(), line, new_text.size() - std::strlen(new_text.data()) - 1);
+    }
 
-	new_text[0] = '\0'; // THIS IS VERY IMPORTANT
+    std::fclose(save_file);
+    save_file = std::fopen(kSaveFile, "w");
+    if (save_file == nullptr) return;
 
-	// Find and remove keys for our selector
-	while (fgets(line, 256, save_file)) {
-		sscanf(line, "%[^:] \n", saved_selector);
-		if (saved_selector == this->name) continue;
-		strcat(new_text, line);
-	}
-
-	fclose(save_file);
-	save_file = fopen(file_name, "w");
-	fputs(new_text, save_file);
-
-	// Write save data
-	if (selected_routine != nullptr) {
-		const char *selector_name = this->name.c_str();
-		const char *routine_name = selected_routine->name.c_str();
-
-		char file_data[strlen(selector_name) + strlen(routine_name) + 2];
-		sprintf(file_data, "%s: %s\n", selector_name, routine_name);
-		fputs(file_data, save_file);
-	}
-
-	fclose(save_file);
+    std::fputs(new_text.data(), save_file);
+    if (selected_routine != nullptr) {
+        char file_data[384];
+        std::snprintf(file_data, sizeof(file_data), "%s: %s\n", name.c_str(), selected_routine->id.c_str());
+        std::fputs(file_data, save_file);
+    }
+    std::fclose(save_file);
 }
 
 void rd::Selector::sd_load() {
-	FILE *save_file;
-	save_file = fopen(file_name, "r");
-	if (!save_file) return;
+    FILE* save_file = std::fopen(kSaveFile, "r");
+    if (save_file == nullptr) return;
 
-	// Read contents
-	char line[256];
-	char saved_selector[256];
-	char saved_name[256];
+    char line[256];
+    char saved_selector[256] = {0};
+    char saved_id[256] = {0};
 
-	while (fgets(line, 256, save_file)) {
-		sscanf(line, "%[^:]: %[^\n\0]", saved_selector, saved_name);
-		if (saved_selector == this->name) break;
-	}
+    while (std::fgets(line, sizeof(line), save_file)) {
+        saved_selector[0] = '\0';
+        saved_id[0] = '\0';
+        std::sscanf(line, "%[^:]: %[^\n\0]", saved_selector, saved_id);
+        if (std::strcmp(saved_selector, name.c_str()) == 0) break;
+    }
 
-	fclose(save_file);
+    std::fclose(save_file);
+    if (std::strcmp(saved_id, "") == 0 || std::strcmp(saved_selector, name.c_str()) != 0) return;
 
-	// None selected or not our selector
-	if (strcmp(saved_name, "") == 0 || saved_selector != this->name) {
-		return;
-	}
-
-	// Press button for selected auton
-	for (int id = 0; id < lv_obj_get_child_cnt(routine_list); id++) {
-		lv_obj_t *list_child = lv_obj_get_child(routine_list, id);
-		if (list_child == nullptr) continue;
-		if (strcmp(lv_list_get_btn_text(routine_list, list_child), saved_name) != 0) continue;
-		lv_event_send(list_child, LV_EVENT_CLICKED, selected_routine);
-		break;
-	}
-}
-
-// ============================== UI Callbacks ============================== //
-
-void rd::Selector::select_cb(lv_event_t *event) {
-	lv_obj_t *obj = lv_event_get_target(event);
-	rd::Selector::routine_t *routine = (rd::Selector::routine_t *)lv_event_get_user_data(event);
-	rd::Selector *selector = (rd::Selector *)lv_obj_get_user_data(obj);
-	if (selector == nullptr) return;
-
-	selector->selected_routine = routine;
-	selector->sd_save();
-
-	selector->run_callbacks();
-
-	// Clear other checked buttons, make this auton's button the checked one
-	for (int id = 0; id < lv_obj_get_child_cnt(selector->routine_list); id++) {
-		lv_obj_t *list_child = lv_obj_get_child(selector->routine_list, id);
-		lv_obj_clear_state(list_child, LV_STATE_CHECKED);
-	}
-	lv_obj_add_state(obj, LV_STATE_CHECKED);
-
-	if (routine == nullptr) {
-		lv_label_set_text(selector->selected_label, "No routine\nselected");
-		lv_obj_add_flag(selector->selected_img, LV_OBJ_FLAG_HIDDEN);
-		return;
-	}
-
-	const char *routine_name = routine->name.c_str();
-
-	char label_str[strlen(routine_name) + 20];
-	sprintf(label_str, "Selected routine:\n%s", routine_name);
-	lv_label_set_text(selector->selected_label, label_str);
-	lv_obj_align(selector->selected_label, LV_ALIGN_CENTER, 120, 0);
-
-	if (routine->img.empty() || !pros::usd::is_installed()) {
-		lv_obj_add_flag(selector->selected_img, LV_OBJ_FLAG_HIDDEN);
-		return;
-	}
-
-	lv_img_set_src(selector->selected_img, routine->img.c_str());
-	lv_obj_clear_flag(selector->selected_img, LV_OBJ_FLAG_HIDDEN);
-}
-
-void rd::Selector::pg_up_cb(lv_event_t *event) {
-	rd::Selector *selector = (rd::Selector *)lv_obj_get_user_data(lv_event_get_target(event));
-	lv_coord_t scroll_y = lv_obj_get_height(selector->routine_list);
-	lv_obj_scroll_by_bounded(selector->routine_list, 0, scroll_y, LV_ANIM_ON);
-}
-
-void rd::Selector::pg_down_cb(lv_event_t *event) {
-	rd::Selector *selector = (rd::Selector *)lv_obj_get_user_data(lv_event_get_target(event));
-	lv_coord_t scroll_y = lv_obj_get_height(selector->routine_list) * -1;
-	lv_obj_scroll_by_bounded(selector->routine_list, 0, scroll_y, LV_ANIM_ON);
-}
-
-void rd::Selector::up_cb(lv_event_t *event) {
-	rd::Selector *selector = (rd::Selector *)lv_obj_get_user_data(lv_event_get_target(event));
-	if (!selector) return;
-	selector->prev_auton();
-}
-
-void rd::Selector::down_cb(lv_event_t *event) {
-	rd::Selector *selector = (rd::Selector *)lv_obj_get_user_data(lv_event_get_target(event));
-	if (!selector) return;
-	selector->next_auton();
-}
-
-// ============================== Constructor ============================== //
-
-rd::Selector::Selector(std::vector<routine_t> autons, pros::Controller* controller) : Selector("Auton Selector", autons, controller) {}
-
-rd::Selector::Selector(std::string name, std::vector<routine_t> new_routines, pros::Controller* controller) {
-	this->name = name;
-	this->selected_routine = nullptr;
-	this->controller = controller;
-
-	// ----------------------------- Create UI ----------------------------- //
-
-	this->view = rd_view_create(name.c_str());
-
-	lv_obj_set_style_bg_color(view->obj, color_bg, 0);
-
-	routine_list = lv_list_create(view->obj);
-	lv_obj_set_size(routine_list, 228, 192);
-	lv_obj_align(routine_list, LV_ALIGN_TOP_LEFT, 8, 40);
-	lv_obj_add_style(routine_list, &style_list, 0);
-
-	selected_cont = lv_obj_create(view->obj);
-	lv_obj_add_style(selected_cont, &style_transp, 0);
-	lv_obj_set_layout(selected_cont, LV_LAYOUT_FLEX);
-	lv_obj_set_size(selected_cont, 240, 240);
-	lv_obj_align(selected_cont, LV_ALIGN_CENTER, 120, 0);
-	lv_obj_set_flex_align(
-	    selected_cont, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER
-	);
-	lv_obj_set_flex_flow(selected_cont, LV_FLEX_FLOW_COLUMN);
-
-	selected_label = lv_label_create(selected_cont);
-	lv_label_set_text(selected_label, "No routine\nselected");
-	lv_obj_add_style(selected_label, &style_text_centered, 0);
-	lv_obj_add_style(selected_label, &style_text_medium, 0);
-
-	selected_img = lv_img_create(selected_cont);
-	lv_obj_set_size(selected_img, 168, 168);
-	lv_obj_add_flag(selected_img, LV_OBJ_FLAG_HIDDEN);
-
-	// Routine list button cluster
-	lv_obj_t *list_btns = lv_obj_create(view->obj);
-	lv_obj_add_style(list_btns, &style_transp, 0);
-	lv_obj_set_size(list_btns, 32, 192);
-	lv_obj_align(list_btns, LV_ALIGN_TOP_LEFT, 236, 40);
-	lv_obj_clear_flag(list_btns, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_layout(list_btns, LV_LAYOUT_FLEX);
-	lv_obj_set_flex_flow(list_btns, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(
-	    list_btns, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER
-	);
-
-	// Up page button
-	lv_obj_t *pg_up_btn = lv_btn_create(list_btns);
-	lv_obj_add_style(pg_up_btn, &style_transp, 0);
-	lv_obj_set_size(pg_up_btn, 32, 32);
-	lv_obj_add_event_cb(pg_up_btn, &pg_up_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_set_user_data(pg_up_btn, this);
-	lv_obj_add_flag(pg_up_btn, LV_OBJ_FLAG_HIDDEN);
-	lv_obj_set_style_text_opa(pg_up_btn, 128, LV_STATE_PRESSED);
-	lv_obj_set_flex_grow(pg_up_btn, 1);
-
-	lv_obj_t *pg_up_img = lv_img_create(pg_up_btn);
-	lv_obj_align(pg_up_img, LV_ALIGN_CENTER, 0, 0);
-	lv_img_set_src(pg_up_img, LV_SYMBOL_UP "\n" LV_SYMBOL_UP);
-	lv_obj_set_style_text_line_space(pg_up_img, -10, LV_PART_MAIN);
-
-	// Up button
-	lv_obj_t *up_btn = lv_btn_create(list_btns);
-	lv_obj_add_style(up_btn, &style_transp, 0);
-	lv_obj_set_size(up_btn, 32, 32);
-	lv_obj_add_event_cb(up_btn, &up_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_set_user_data(up_btn, this);
-	lv_obj_set_style_text_opa(up_btn, 128, LV_STATE_PRESSED);
-	lv_obj_set_flex_grow(up_btn, 1);
-
-	lv_obj_t *up_img = lv_img_create(up_btn);
-	lv_obj_align(up_img, LV_ALIGN_CENTER, 0, 0);
-	lv_img_set_src(up_img, LV_SYMBOL_UP);
-
-	// Down button
-	lv_obj_t *down_btn = lv_btn_create(list_btns);
-	lv_obj_add_style(down_btn, &style_transp, 0);
-	lv_obj_set_size(down_btn, 32, 32);
-	lv_obj_add_event_cb(down_btn, &down_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_set_user_data(down_btn, this);
-	lv_obj_set_style_text_opa(down_btn, 128, LV_STATE_PRESSED);
-	lv_obj_set_flex_grow(down_btn, 1);
-
-	lv_obj_t *down_img = lv_img_create(down_btn);
-	lv_obj_align(down_img, LV_ALIGN_CENTER, 0, 0);
-	lv_img_set_src(down_img, LV_SYMBOL_DOWN);
-
-	// Down page button
-	lv_obj_t *pg_down_btn = lv_btn_create(list_btns);
-	lv_obj_add_style(pg_down_btn, &style_transp, 0);
-	lv_obj_set_size(pg_down_btn, 32, 32);
-	lv_obj_add_event_cb(pg_down_btn, &pg_down_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_set_user_data(pg_down_btn, this);
-	lv_obj_add_flag(pg_down_btn, LV_OBJ_FLAG_HIDDEN);
-	lv_obj_set_style_text_opa(pg_down_btn, 128, LV_STATE_PRESSED);
-	lv_obj_set_flex_grow(pg_down_btn, 1);
-
-	lv_obj_t *pg_down_img = lv_img_create(pg_down_btn);
-	lv_obj_align(pg_down_img, LV_ALIGN_CENTER, 0, 0);
-	lv_img_set_src(pg_down_img, LV_SYMBOL_DOWN "\n" LV_SYMBOL_DOWN);
-	lv_obj_set_style_text_line_space(pg_down_img, -10, LV_PART_MAIN);
-
-	// Nothing auton
-	lv_obj_t *nothing_btn = lv_list_add_btn(routine_list, NULL, "Nothing");
-	lv_obj_add_event_cb(nothing_btn, &select_cb, LV_EVENT_CLICKED, nullptr);
-	lv_obj_set_user_data(nothing_btn, this);
-	lv_obj_add_style(nothing_btn, &style_list_btn, 0);
-	lv_obj_add_style(nothing_btn, &style_list_btn_pr, LV_STATE_PRESSED);
-	lv_obj_add_style(nothing_btn, &style_list_btn_ch, LV_STATE_CHECKED);
-	lv_obj_set_style_transform_width(nothing_btn, -8, 0);
-	lv_obj_add_state(nothing_btn, LV_STATE_CHECKED);
-
-	lv_obj_t *title = lv_label_create(view->obj);
-	lv_label_set_text(title, "Select autonomous routine");
-	lv_obj_add_style(title, &style_text_large, 0);
-	lv_obj_align(title, LV_ALIGN_TOP_LEFT, 8, 12);
-
-	if (pros::usd::is_installed()) {
-		lv_obj_t *save_icon = lv_label_create(list_btns);
-		lv_obj_add_style(save_icon, &style_text_medium, 0);
-		lv_obj_add_style(save_icon, &style_text_centered, 0);
-		lv_label_set_text(save_icon, LV_SYMBOL_SD_CARD "\nSD");
-	}
-
-	// ----------------------------- Add autons ----------------------------- //
-
-	for (routine_t routine : new_routines) {
-		if (!routine.img.empty()) {
-			routine.img.insert(0, "S:");
-		}
-
-		routines.push_back(routine);
-	}
-
-	for (routine_t &routine : routines) {
-		lv_obj_t *new_btn = lv_list_add_btn(routine_list, NULL, routine.name.c_str());
-
-		lv_obj_add_style(new_btn, &style_list_btn, 0);
-		lv_obj_add_style(new_btn, &style_list_btn_pr, LV_STATE_PRESSED);
-		lv_obj_add_style(new_btn, &style_list_btn_ch, LV_STATE_CHECKED);
-		lv_obj_set_style_transform_width(new_btn, -8, 0);
-		lv_obj_set_user_data(new_btn, this);
-		lv_obj_add_event_cb(new_btn, &select_cb, LV_EVENT_CLICKED, &routine);
-
-		if (routine.color_hue > -1) {
-			lv_obj_t *color_chip = lv_obj_create(new_btn);
-			lv_obj_set_size(color_chip, 16, 16);
-			lv_obj_set_style_bg_color(
-			    color_chip, lv_color_hsv_to_rgb(routine.color_hue, 75, 80), 0
-			);
-			lv_obj_set_style_border_opa(color_chip, LV_OPA_0, 0);
-			lv_obj_set_style_radius(color_chip, 4, 0);
-			lv_obj_align(color_chip, LV_ALIGN_RIGHT_MID, -4, 8);
-			lv_obj_clear_flag(color_chip, LV_OBJ_FLAG_SCROLLABLE);
-			lv_obj_clear_flag(color_chip, LV_OBJ_FLAG_CLICKABLE);
-		}
-	}
-
-	if (routines.size() > 3) {
-		lv_obj_clear_flag(pg_down_btn, LV_OBJ_FLAG_HIDDEN);
-		lv_obj_clear_flag(pg_up_btn, LV_OBJ_FLAG_HIDDEN);
-	}
-
-	if (pros::usd::is_installed()) sd_load();
-}
-
-// ============================= Other Methods ============================= //
-
-void rd::Selector::next_auton(bool wrap_around) {
-	for (int id = 0; id < lv_obj_get_child_cnt(routine_list); id++) {
-		lv_obj_t *list_child = lv_obj_get_child(routine_list, id);
-		if (!lv_obj_has_state(list_child, LV_STATE_CHECKED)) continue;
-
-		if (id == lv_obj_get_child_cnt(routine_list) - 1) {
-			if (!wrap_around) return;
-			// nullptr because the "Nothing" button is always first, and doesnt have user data
-			lv_event_send(lv_obj_get_child(routine_list, 0), LV_EVENT_CLICKED, nullptr);
-		} else {
-			lv_obj_t *next_child = lv_obj_get_child(routine_list, id + 1);
-			if (next_child == nullptr) return;
-			lv_event_send(next_child, LV_EVENT_CLICKED, &routines[id + 1]);
-		}
-
-		return;
-	}
-}
-
-void rd::Selector::prev_auton(bool wrap_around) {
-	lv_obj_t *prev_child = nullptr;
-	int child_count = lv_obj_get_child_cnt(routine_list);
-	for (int id = 0; id < child_count; id++) {
-		lv_obj_t *list_child = lv_obj_get_child(routine_list, id);
-		if (!lv_obj_has_state(list_child, LV_STATE_CHECKED)) {
-			prev_child = list_child;
-			continue;
-		};
-
-		if (id == 0) {
-			if (!wrap_around) return;
-			lv_event_send(
-			    lv_obj_get_child(routine_list, child_count - 1), LV_EVENT_CLICKED,
-			    &routines[child_count - 1]
-			);
-		} else {
-			if (prev_child == nullptr) return;
-			lv_event_send(prev_child, LV_EVENT_CLICKED, &routines[id - 1]);
-		}
-
-		return;
-	}
+    for (int i = 0; i < static_cast<int>(routines.size()); i++) {
+        if (routines[static_cast<size_t>(i)].id == saved_id) {
+            select_index(i, false);
+            break;
+        }
+    }
 }
 
 void rd::Selector::run_callbacks() {
-	for (select_action_t callback : this->select_callbacks) {
-		if (this->selected_routine == nullptr) {
-			callback(std::nullopt);
-		} else {
-			callback(*this->selected_routine);
-		}
-	}
+    for (select_action_t callback : select_callbacks) {
+        if (selected_routine == nullptr) callback(std::nullopt);
+        else callback(*selected_routine);
+    }
 }
 
 void rd::Selector::run_auton() {
-	if (selected_routine == nullptr) return; // If commanded to do nothing then return
-	selected_routine->action();
+    if (selected_routine == nullptr) return;
+    selected_routine->action();
+    ScopedMutex lock(state_mutex);
+    mark_done();
 }
 
 std::optional<rd::Selector::routine_t> rd::Selector::get_auton() {
-	if (selected_routine == nullptr) return std::nullopt;
-	return *selected_routine;
+    if (selected_routine == nullptr) return std::nullopt;
+    return *selected_routine;
 }
 
-void rd::Selector::on_select(rd::Selector::select_action_t callback) {
-	select_callbacks.push_back(callback);
+void rd::Selector::on_select(rd::Selector::select_action_t callback) { select_callbacks.push_back(callback); }
+
+void rd::Selector::next_auton(bool wrap_around) {
+    ScopedMutex lock(state_mutex);
+    if (routines.empty()) return;
+    if (selected_index < 0) {
+        select_index(0, true);
+        refresh_selection_styles();
+        return;
+    }
+    int next = selected_index + 1;
+    if (next >= static_cast<int>(routines.size())) {
+        if (!wrap_around) return;
+        next = 0;
+    }
+    select_index(next, true);
+    refresh_selection_styles();
 }
+
+void rd::Selector::prev_auton(bool wrap_around) {
+    ScopedMutex lock(state_mutex);
+    if (routines.empty()) return;
+    if (selected_index < 0) {
+        select_index(0, true);
+        refresh_selection_styles();
+        return;
+    }
+    int prev = selected_index - 1;
+    if (prev < 0) {
+        if (!wrap_around) return;
+        prev = static_cast<int>(routines.size()) - 1;
+    }
+    select_index(prev, true);
+    refresh_selection_styles();
+}
+
+void rd::Selector::focus() { rd_view_focus(view); }
 
 void rd::Selector::update() {
-	if (controller == nullptr) return;
-	if (rd_view_get_current() != this->view) return;
-	
-	// UP: Previous auton
-	if (controller->get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) {
-		prev_auton();
-	}
-	
-	// DOWN: Next auton
-	if (controller->get_digital_new_press(pros::E_CONTROLLER_DIGITAL_DOWN)) {
-		next_auton();
-	}
-	
-	// A: Select current auton (simulate clicking it)
-	if (controller->get_digital_new_press(pros::E_CONTROLLER_DIGITAL_A)) {
-		// Find the currently highlighted button and click it
-		for (int id = 0; id < lv_obj_get_child_cnt(routine_list); id++) {
-			lv_obj_t *list_child = lv_obj_get_child(routine_list, id);
-			if (list_child == nullptr) continue;
-			if (lv_obj_has_state(list_child, LV_STATE_CHECKED)) {
-				// This is the selected one, confirm it
-				controller->rumble(".");
-				break;
-			}
-		}
-	}
-	
-	// Update controller LCD when selection changes
-	static rd::Selector::routine_t* last_routine = nullptr;
-	static bool first_update = true;
-	static bool was_active = false;
-	
-	// Only update if this is the active view
-	bool is_active = (rd_view_get_current() == this->view);
-	if (!is_active) {
-		was_active = false;
-		return;
-	}
-	
-	// Clear screen when view just became active
-	if (!was_active) {
-		controller->clear();
-		pros::delay(50);
-		was_active = true;
-		first_update = true; // Force update after clearing
-	}
-	
-	if (first_update || selected_routine != last_routine) {
-		first_update = false;
-		last_routine = selected_routine;
-		
-		// Line 0: Title
-		controller->set_text(0, 0, "Auton Selector");
-		pros::delay(50);
-		
-		// Line 1: Current selection
-		if (selected_routine != nullptr) {
-			char line1[32];
-			snprintf(line1, sizeof(line1), ">%s", selected_routine->name.c_str());
-			controller->set_text(1, 0, line1);
-		} else {
-			controller->set_text(1, 0, ">No selection");
-		}
-		pros::delay(50);
-		
-		// Line 2: Empty
-		controller->set_text(2, 0, "");
-		pros::delay(50);
-	}
+    // Controller support intentionally disabled while keeping API compatibility.
 }
 
-void rd::Selector::focus() { rd_view_focus(this->view); }
+rd::Selector* rd::Selector::from_event(lv_event_t* event) {
+    lv_obj_t* target = lv_event_get_target(event);
+    return static_cast<rd::Selector*>(lv_obj_get_user_data(target));
+}
+
+void rd::Selector::card_cb(lv_event_t* event) {
+    rd::Selector* self = from_event(event);
+    if (self == nullptr) return;
+    const int idx = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(event)));
+    ScopedMutex lock(self->state_mutex);
+    self->select_index(idx, true);
+    self->refresh_selection_styles();
+}
+
+void rd::Selector::alliance_cb(lv_event_t* event) {
+    rd::Selector* self = from_event(event);
+    if (self == nullptr) return;
+    const int value = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(event)));
+
+    ScopedMutex lock(self->state_mutex);
+    if (value == 1) self->alliance = Alliance::RED;
+    else if (value == 2) self->alliance = Alliance::BLUE;
+    else self->alliance = Alliance::NONE;
+    self->refresh_selection_styles();
+}
+
+void rd::Selector::play_cb(lv_event_t* event) {
+    rd::Selector* self = from_event(event);
+    if (self == nullptr) return;
+
+    ScopedMutex lock(self->state_mutex);
+    if (self->selected_routine == nullptr) return;
+    if (self->transport_state == TransportState::RUNNING) return;
+    if (self->transport_state == TransportState::DONE) {
+        self->elapsed = 0;
+        self->saved_elapsed = 0;
+    }
+
+    self->start_tick = lv_tick_get();
+    if (self->transport_timer == nullptr) {
+        self->transport_timer = lv_timer_create(transport_timer_cb, 50, self);
+    }
+    self->transport_state = TransportState::RUNNING;
+    self->update_transport_labels();
+    self->update_transport_buttons();
+}
+
+void rd::Selector::pause_cb(lv_event_t* event) {
+    rd::Selector* self = from_event(event);
+    if (self == nullptr) return;
+
+    ScopedMutex lock(self->state_mutex);
+    if (self->transport_state != TransportState::RUNNING) return;
+    self->elapsed = self->saved_elapsed + lv_tick_elaps(self->start_tick);
+    self->saved_elapsed = self->elapsed;
+    self->stop_timer_task();
+    self->transport_state = TransportState::PAUSED;
+    self->update_transport_labels();
+    self->update_transport_buttons();
+}
+
+void rd::Selector::stop_cb(lv_event_t* event) {
+    rd::Selector* self = from_event(event);
+    if (self == nullptr) return;
+
+    ScopedMutex lock(self->state_mutex);
+    self->stop_transport();
+}
+
+void rd::Selector::transport_timer_cb(lv_timer_t* timer) {
+    rd::Selector* self = static_cast<rd::Selector*>(timer->user_data);
+    if (self == nullptr) return;
+
+    ScopedMutex lock(self->state_mutex);
+    if (self->transport_state != TransportState::RUNNING) return;
+    self->elapsed = self->saved_elapsed + lv_tick_elaps(self->start_tick);
+    self->update_transport_labels();
+    self->update_transport_buttons();
+}
