@@ -11,27 +11,6 @@ namespace {
 
 const char* kSaveFile = "/usd/rd_auton.txt";
 
-namespace colors {
-static const lv_color_t screen_bg = lv_color_hex(0x000000);
-static const lv_color_t panel_bg = lv_color_hex(0x050505);
-static const lv_color_t divider = lv_color_hex(0x0f0f0f);
-static const lv_color_t card_border = lv_color_hex(0x131313);
-static const lv_color_t inactive_border = lv_color_hex(0x1a1a1a);
-static const lv_color_t selected_text = lv_color_hex(0xffffff);
-static const lv_color_t unselected_name = lv_color_hex(0x555555);
-static const lv_color_t selected_sub = lv_color_hex(0x2a2a2a);
-static const lv_color_t unselected_sub = lv_color_hex(0x1a1a1a);
-static const lv_color_t section_header = lv_color_hex(0x1e1e1e);
-static const lv_color_t disabled_icon = lv_color_hex(0x181818);
-static const lv_color_t red = lv_color_hex(0xf87171);
-static const lv_color_t blue = lv_color_hex(0x60a5fa);
-static const lv_color_t green = lv_color_hex(0x22c55e);
-static const lv_color_t amber = lv_color_hex(0xf59e0b);
-static const lv_color_t idle = lv_color_hex(0x252525);
-static const lv_color_t dark_btn_bg = lv_color_hex(0x070707);
-static const lv_color_t card_bg = lv_color_hex(0x080808);
-} // namespace colors
-
 struct ScopedMutex {
     explicit ScopedMutex(pros::Mutex& m) : mutex(m) { mutex.take(TIMEOUT_MAX); }
     ~ScopedMutex() { mutex.give(); }
@@ -50,9 +29,9 @@ void apply_button_enabled_style(lv_obj_t* btn, lv_obj_t* icon, bool enabled, lv_
         lv_obj_set_style_border_opa(btn, LV_OPA_27, 0);
         lv_obj_set_style_text_color(icon, active_color, 0);
     } else {
-        lv_obj_set_style_border_color(btn, lv_color_hex(0x111111), 0);
+        lv_obj_set_style_border_color(btn, color_selector_disabled_border, 0);
         lv_obj_set_style_border_opa(btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_text_color(icon, colors::disabled_icon, 0);
+        lv_obj_set_style_text_color(icon, color_selector_disabled_icon, 0);
     }
 }
 
@@ -105,7 +84,7 @@ rd::Selector::Selector(std::string selector_name, std::vector<routine_t> autons,
 
     view = rd_view_create(name.c_str());
     lv_obj_t* root = view->obj;
-    lv_obj_set_style_bg_color(root, colors::screen_bg, 0);
+    lv_obj_set_style_bg_color(root, color_selector_screen_bg, 0);
     lv_obj_set_style_pad_all(root, 0, 0);
 
     create_left_panel();
@@ -121,10 +100,10 @@ void rd::Selector::create_left_panel() {
     left_panel = lv_obj_create(root);
     lv_obj_set_pos(left_panel, 0, 0);
     lv_obj_set_size(left_panel, 148, 240);
-    lv_obj_set_style_bg_color(left_panel, colors::panel_bg, 0);
+    lv_obj_set_style_bg_color(left_panel, color_selector_panel_bg, 0);
     lv_obj_set_style_border_width(left_panel, 1, 0);
     lv_obj_set_style_border_side(left_panel, LV_BORDER_SIDE_RIGHT, 0);
-    lv_obj_set_style_border_color(left_panel, colors::inactive_border, 0);
+    lv_obj_set_style_border_color(left_panel, color_selector_inactive_border, 0);
     lv_obj_set_style_radius(left_panel, 0, 0);
     lv_obj_set_style_pad_all(left_panel, 0, 0);
     lv_obj_clear_flag(left_panel, LV_OBJ_FLAG_SCROLLABLE);
@@ -136,7 +115,7 @@ void rd::Selector::create_left_panel() {
     lv_label_set_text(selected_hdr, "SELECTED");
     lv_obj_set_pos(selected_hdr, pad, y);
     lv_obj_set_style_text_font(selected_hdr, &lv_font_montserrat_8, 0);
-    lv_obj_set_style_text_color(selected_hdr, colors::section_header, 0);
+    lv_obj_set_style_text_color(selected_hdr, color_selector_section_header, 0);
     lv_obj_set_style_text_letter_space(selected_hdr, 3, 0);
 
     y += 20;
@@ -144,21 +123,21 @@ void rd::Selector::create_left_panel() {
     lv_label_set_text(selected_name_label, "-");
     lv_obj_set_pos(selected_name_label, pad, y);
     lv_obj_set_style_text_font(selected_name_label, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(selected_name_label, colors::inactive_border, 0);
+    lv_obj_set_style_text_color(selected_name_label, color_selector_inactive_border, 0);
 
     y += 24;
     selected_sub_label = lv_label_create(left_panel);
     lv_label_set_text(selected_sub_label, "");
     lv_obj_set_pos(selected_sub_label, pad, y);
     lv_obj_set_style_text_font(selected_sub_label, &lv_font_montserrat_8, 0);
-    lv_obj_set_style_text_color(selected_sub_label, colors::selected_sub, 0);
+    lv_obj_set_style_text_color(selected_sub_label, color_selector_selected_sub, 0);
     lv_obj_add_flag(selected_sub_label, LV_OBJ_FLAG_HIDDEN);
 
     y += 18;
     lv_obj_t* divider1 = lv_obj_create(left_panel);
     lv_obj_set_pos(divider1, 0, y);
     lv_obj_set_size(divider1, 148, 1);
-    lv_obj_set_style_bg_color(divider1, colors::divider, 0);
+    lv_obj_set_style_bg_color(divider1, color_selector_divider, 0);
     lv_obj_set_style_border_width(divider1, 0, 0);
     lv_obj_set_style_radius(divider1, 0, 0);
 
@@ -167,7 +146,7 @@ void rd::Selector::create_left_panel() {
     lv_label_set_text(alliance_hdr, "ALLIANCE");
     lv_obj_set_pos(alliance_hdr, pad, y);
     lv_obj_set_style_text_font(alliance_hdr, &lv_font_montserrat_8, 0);
-    lv_obj_set_style_text_color(alliance_hdr, colors::section_header, 0);
+    lv_obj_set_style_text_color(alliance_hdr, color_selector_section_header, 0);
 
     y += 14;
     alliance_red_btn = lv_btn_create(left_panel);
@@ -175,8 +154,8 @@ void rd::Selector::create_left_panel() {
     lv_obj_set_size(alliance_red_btn, 55, 32);
     lv_obj_set_style_radius(alliance_red_btn, 4, 0);
     lv_obj_set_style_border_width(alliance_red_btn, 1, 0);
-    lv_obj_set_style_bg_color(alliance_red_btn, colors::card_bg, 0);
-    lv_obj_set_style_border_color(alliance_red_btn, colors::inactive_border, 0);
+    lv_obj_set_style_bg_color(alliance_red_btn, color_selector_card_bg, 0);
+    lv_obj_set_style_border_color(alliance_red_btn, color_selector_inactive_border, 0);
     lv_obj_set_user_data(alliance_red_btn, this);
     lv_obj_add_event_cb(alliance_red_btn, alliance_cb, LV_EVENT_CLICKED, reinterpret_cast<void*>(1));
 
@@ -190,8 +169,8 @@ void rd::Selector::create_left_panel() {
     lv_obj_set_size(alliance_blue_btn, 55, 32);
     lv_obj_set_style_radius(alliance_blue_btn, 4, 0);
     lv_obj_set_style_border_width(alliance_blue_btn, 1, 0);
-    lv_obj_set_style_bg_color(alliance_blue_btn, colors::card_bg, 0);
-    lv_obj_set_style_border_color(alliance_blue_btn, colors::inactive_border, 0);
+    lv_obj_set_style_bg_color(alliance_blue_btn, color_selector_card_bg, 0);
+    lv_obj_set_style_border_color(alliance_blue_btn, color_selector_inactive_border, 0);
     lv_obj_set_user_data(alliance_blue_btn, this);
     lv_obj_add_event_cb(alliance_blue_btn, alliance_cb, LV_EVENT_CLICKED, reinterpret_cast<void*>(2));
 
@@ -204,7 +183,7 @@ void rd::Selector::create_left_panel() {
     lv_obj_t* divider2 = lv_obj_create(left_panel);
     lv_obj_set_pos(divider2, 0, y);
     lv_obj_set_size(divider2, 148, 1);
-    lv_obj_set_style_bg_color(divider2, colors::divider, 0);
+    lv_obj_set_style_bg_color(divider2, color_selector_divider, 0);
     lv_obj_set_style_border_width(divider2, 0, 0);
     lv_obj_set_style_radius(divider2, 0, 0);
 
@@ -213,20 +192,20 @@ void rd::Selector::create_left_panel() {
     lv_label_set_text(transport_hdr, "TRANSPORT");
     lv_obj_set_pos(transport_hdr, pad, y);
     lv_obj_set_style_text_font(transport_hdr, &lv_font_montserrat_8, 0);
-    lv_obj_set_style_text_color(transport_hdr, colors::section_header, 0);
+    lv_obj_set_style_text_color(transport_hdr, color_selector_section_header, 0);
 
     transport_state_label = lv_label_create(left_panel);
     lv_label_set_text(transport_state_label, "IDLE");
     lv_obj_set_style_text_font(transport_state_label, &lv_font_montserrat_8, 0);
-    lv_obj_set_style_text_color(transport_state_label, colors::idle, 0);
+    lv_obj_set_style_text_color(transport_state_label, color_selector_idle, 0);
     lv_obj_align_to(transport_state_label, transport_hdr, LV_ALIGN_OUT_RIGHT_MID, 36, 0);
 
     y += 16;
     transport_bar = lv_bar_create(left_panel);
     lv_obj_set_pos(transport_bar, pad, y);
     lv_obj_set_size(transport_bar, 124, 3);
-    lv_obj_set_style_bg_color(transport_bar, colors::divider, 0);
-    lv_obj_set_style_bg_color(transport_bar, colors::idle, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(transport_bar, color_selector_divider, 0);
+    lv_obj_set_style_bg_color(transport_bar, color_selector_idle, LV_PART_INDICATOR);
     lv_bar_set_range(transport_bar, 0, 100);
 
     y += 11;
@@ -234,12 +213,12 @@ void rd::Selector::create_left_panel() {
     lv_label_set_text(timer_elapsed_label, "00:00.0");
     lv_obj_set_pos(timer_elapsed_label, pad, y);
     lv_obj_set_style_text_font(timer_elapsed_label, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(timer_elapsed_label, colors::idle, 0);
+    lv_obj_set_style_text_color(timer_elapsed_label, color_selector_idle, 0);
 
     timer_suffix_label = lv_label_create(left_panel);
     lv_label_set_text(timer_suffix_label, " / 00:15.0");
     lv_obj_set_style_text_font(timer_suffix_label, &lv_font_montserrat_8, 0);
-    lv_obj_set_style_text_color(timer_suffix_label, colors::unselected_sub, 0);
+    lv_obj_set_style_text_color(timer_suffix_label, color_selector_unselected_sub, 0);
     lv_obj_align_to(timer_suffix_label, timer_elapsed_label, LV_ALIGN_OUT_RIGHT_BOTTOM, 4, -3);
 
     y += 31;
@@ -247,7 +226,7 @@ void rd::Selector::create_left_panel() {
     lv_obj_set_pos(play_btn, pad, y);
     lv_obj_set_size(play_btn, 39, 36);
     lv_obj_set_style_radius(play_btn, 4, 0);
-    lv_obj_set_style_bg_color(play_btn, colors::dark_btn_bg, 0);
+    lv_obj_set_style_bg_color(play_btn, color_selector_dark_btn_bg, 0);
     lv_obj_set_style_border_width(play_btn, 1, 0);
     lv_obj_set_user_data(play_btn, this);
     lv_obj_add_event_cb(play_btn, play_cb, LV_EVENT_CLICKED, nullptr);
@@ -259,7 +238,7 @@ void rd::Selector::create_left_panel() {
     lv_obj_set_pos(pause_btn, pad + 43, y);
     lv_obj_set_size(pause_btn, 39, 36);
     lv_obj_set_style_radius(pause_btn, 4, 0);
-    lv_obj_set_style_bg_color(pause_btn, colors::dark_btn_bg, 0);
+    lv_obj_set_style_bg_color(pause_btn, color_selector_dark_btn_bg, 0);
     lv_obj_set_style_border_width(pause_btn, 1, 0);
     lv_obj_set_user_data(pause_btn, this);
     lv_obj_add_event_cb(pause_btn, pause_cb, LV_EVENT_CLICKED, nullptr);
@@ -271,7 +250,7 @@ void rd::Selector::create_left_panel() {
     lv_obj_set_pos(stop_btn, pad + 86, y);
     lv_obj_set_size(stop_btn, 39, 36);
     lv_obj_set_style_radius(stop_btn, 4, 0);
-    lv_obj_set_style_bg_color(stop_btn, colors::dark_btn_bg, 0);
+    lv_obj_set_style_bg_color(stop_btn, color_selector_dark_btn_bg, 0);
     lv_obj_set_style_border_width(stop_btn, 1, 0);
     lv_obj_set_user_data(stop_btn, this);
     lv_obj_add_event_cb(stop_btn, stop_cb, LV_EVENT_CLICKED, nullptr);
@@ -286,7 +265,7 @@ void rd::Selector::create_right_panel() {
     right_panel = lv_obj_create(root);
     lv_obj_set_pos(right_panel, 148, 0);
     lv_obj_set_size(right_panel, 332, 240);
-    lv_obj_set_style_bg_color(right_panel, colors::panel_bg, 0);
+    lv_obj_set_style_bg_color(right_panel, color_selector_panel_bg, 0);
     lv_obj_set_style_border_width(right_panel, 0, 0);
     lv_obj_set_style_radius(right_panel, 0, 0);
     lv_obj_set_style_pad_all(right_panel, 0, 0);
@@ -323,9 +302,9 @@ void rd::Selector::create_right_panel() {
         CardRefs card;
         card.btn = lv_btn_create(grid);
         lv_obj_set_style_radius(card.btn, 6, 0);
-        lv_obj_set_style_bg_color(card.btn, colors::card_bg, 0);
+        lv_obj_set_style_bg_color(card.btn, color_selector_card_bg, 0);
         lv_obj_set_style_border_width(card.btn, 1, 0);
-        lv_obj_set_style_border_color(card.btn, colors::card_border, 0);
+        lv_obj_set_style_border_color(card.btn, color_selector_card_border, 0);
         lv_obj_set_style_pad_all(card.btn, pad, 0);
         lv_obj_set_style_pad_row(card.btn, 4, 0);
         lv_obj_set_user_data(card.btn, this);
@@ -358,8 +337,8 @@ void rd::Selector::create_right_panel() {
 }
 
 lv_color_t rd::Selector::current_accent() const {
-    if (alliance == Alliance::BLUE) return colors::blue;
-    return colors::red;
+    if (alliance == Alliance::BLUE) return color_selector_blue;
+    return color_selector_red;
 }
 
 int rd::Selector::current_duration() const {
@@ -384,14 +363,14 @@ std::string rd::Selector::to_routine_id(const routine_t& routine) const {
 void rd::Selector::update_selected_panel() {
     if (selected_index < 0 || selected_routine == nullptr) {
         lv_label_set_text(selected_name_label, "-");
-        lv_obj_set_style_text_color(selected_name_label, colors::inactive_border, 0);
+        lv_obj_set_style_text_color(selected_name_label, color_selector_inactive_border, 0);
         lv_obj_add_flag(selected_sub_label, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
     const std::string upper = to_upper_copy(selected_routine->name);
     lv_label_set_text(selected_name_label, upper.c_str());
-    lv_obj_set_style_text_color(selected_name_label, colors::selected_text, 0);
+    lv_obj_set_style_text_color(selected_name_label, color_selector_selected_text, 0);
 
     lv_label_set_text(selected_sub_label, selected_routine->sub.c_str());
     lv_obj_clear_flag(selected_sub_label, LV_OBJ_FLAG_HIDDEN);
@@ -401,11 +380,11 @@ void rd::Selector::apply_card_unselected(int idx) {
     if (idx < 0 || idx >= static_cast<int>(cards.size())) return;
     CardRefs& card = cards[static_cast<size_t>(idx)];
 
-    lv_obj_set_style_bg_color(card.btn, colors::card_bg, 0);
+    lv_obj_set_style_bg_color(card.btn, color_selector_card_bg, 0);
     lv_obj_set_style_bg_opa(card.btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(card.btn, colors::card_border, 0);
-    lv_obj_set_style_text_color(card.name, colors::unselected_name, 0);
-    lv_obj_set_style_text_color(card.sub, colors::unselected_sub, 0);
+    lv_obj_set_style_border_color(card.btn, color_selector_card_border, 0);
+    lv_obj_set_style_text_color(card.name, color_selector_unselected_name, 0);
+    lv_obj_set_style_text_color(card.sub, color_selector_unselected_sub, 0);
     lv_obj_set_style_text_opa(card.sub, LV_OPA_COVER, 0);
 
     if (card.top_bar != nullptr) {
@@ -422,8 +401,8 @@ void rd::Selector::apply_card_selected(int idx) {
     lv_obj_set_style_bg_color(card.btn, accent, 0);
     lv_obj_set_style_bg_opa(card.btn, LV_OPA_15, 0);
     lv_obj_set_style_border_color(card.btn, accent, 0);
-    lv_obj_set_style_text_color(card.name, colors::selected_text, 0);
-    lv_obj_set_style_text_color(card.sub, colors::selected_text, 0);
+    lv_obj_set_style_text_color(card.name, color_selector_selected_text, 0);
+    lv_obj_set_style_text_color(card.sub, color_selector_selected_text, 0);
     lv_obj_set_style_text_opa(card.sub, LV_OPA_20, 0);
 
     if (card.top_bar == nullptr) {
@@ -440,27 +419,27 @@ void rd::Selector::apply_card_selected(int idx) {
 
 void rd::Selector::refresh_alliance_buttons() {
     if (alliance == Alliance::RED) {
-        lv_obj_set_style_border_color(alliance_red_btn, colors::red, 0);
-        lv_obj_set_style_bg_color(alliance_red_btn, colors::red, 0);
+        lv_obj_set_style_border_color(alliance_red_btn, color_selector_red, 0);
+        lv_obj_set_style_bg_color(alliance_red_btn, color_selector_red, 0);
         lv_obj_set_style_bg_opa(alliance_red_btn, LV_OPA_15, 0);
-        lv_obj_set_style_text_color(alliance_red_txt, colors::selected_text, 0);
+        lv_obj_set_style_text_color(alliance_red_txt, color_selector_selected_text, 0);
     } else {
-        lv_obj_set_style_border_color(alliance_red_btn, colors::inactive_border, 0);
-        lv_obj_set_style_bg_color(alliance_red_btn, colors::card_bg, 0);
+        lv_obj_set_style_border_color(alliance_red_btn, color_selector_inactive_border, 0);
+        lv_obj_set_style_bg_color(alliance_red_btn, color_selector_card_bg, 0);
         lv_obj_set_style_bg_opa(alliance_red_btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_text_color(alliance_red_txt, lv_color_hex(0x252525), 0);
+        lv_obj_set_style_text_color(alliance_red_txt, color_selector_inactive_text, 0);
     }
 
     if (alliance == Alliance::BLUE) {
-        lv_obj_set_style_border_color(alliance_blue_btn, colors::blue, 0);
-        lv_obj_set_style_bg_color(alliance_blue_btn, colors::blue, 0);
+        lv_obj_set_style_border_color(alliance_blue_btn, color_selector_blue, 0);
+        lv_obj_set_style_bg_color(alliance_blue_btn, color_selector_blue, 0);
         lv_obj_set_style_bg_opa(alliance_blue_btn, LV_OPA_15, 0);
-        lv_obj_set_style_text_color(alliance_blue_txt, colors::selected_text, 0);
+        lv_obj_set_style_text_color(alliance_blue_txt, color_selector_selected_text, 0);
     } else {
-        lv_obj_set_style_border_color(alliance_blue_btn, colors::inactive_border, 0);
-        lv_obj_set_style_bg_color(alliance_blue_btn, colors::card_bg, 0);
+        lv_obj_set_style_border_color(alliance_blue_btn, color_selector_inactive_border, 0);
+        lv_obj_set_style_bg_color(alliance_blue_btn, color_selector_card_bg, 0);
         lv_obj_set_style_bg_opa(alliance_blue_btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_text_color(alliance_blue_txt, lv_color_hex(0x252525), 0);
+        lv_obj_set_style_text_color(alliance_blue_txt, color_selector_inactive_text, 0);
     }
 }
 
@@ -469,28 +448,28 @@ void rd::Selector::update_transport_buttons() {
     const bool can_pause = transport_state == TransportState::RUNNING;
     const bool can_stop = transport_state != TransportState::IDLE;
 
-    apply_button_enabled_style(play_btn, play_icon, can_play, colors::green);
-    apply_button_enabled_style(pause_btn, pause_icon, can_pause, colors::amber);
-    apply_button_enabled_style(stop_btn, stop_icon, can_stop, colors::red);
+    apply_button_enabled_style(play_btn, play_icon, can_play, color_selector_green);
+    apply_button_enabled_style(pause_btn, pause_icon, can_pause, color_selector_amber);
+    apply_button_enabled_style(stop_btn, stop_icon, can_stop, color_selector_red);
 }
 
 void rd::Selector::update_transport_labels() {
     const int duration = std::max(1, current_duration());
     const bool overtime = elapsed > static_cast<uint32_t>(duration);
 
-    lv_color_t state_color = colors::idle;
+    lv_color_t state_color = color_selector_idle;
     const char* state_text = "IDLE";
     if (transport_state == TransportState::RUNNING && overtime) {
-        state_color = colors::red;
+        state_color = color_selector_red;
         state_text = "OT";
     } else if (transport_state == TransportState::RUNNING) {
-        state_color = colors::green;
+        state_color = color_selector_green;
         state_text = "RUN";
     } else if (transport_state == TransportState::PAUSED) {
-        state_color = colors::amber;
+        state_color = color_selector_amber;
         state_text = "PAUSE";
     } else if (transport_state == TransportState::DONE) {
-        state_color = colors::red;
+        state_color = color_selector_red;
         state_text = "DONE";
     }
 

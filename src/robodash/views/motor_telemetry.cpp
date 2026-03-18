@@ -14,26 +14,6 @@
 // Example: Motor unplugged showing "4000 RPM" due to stale buffer → grace period → correct "0 RPM"
 static const uint32_t RECONNECT_GRACE_MS = 250;  // Milliseconds to wait after reconnection
 
-// ============================= Color Definitions ============================= //
-
-// Use existing robodash colors from colors.c
-// color_bg, color_border, color_shade are defined globally
-
-// Custom metric colors for telemetry
-#define COLOR_VEL lv_color_hex(0x22c55e)
-#define COLOR_PWR lv_color_hex(0x0ea5e9)
-#define COLOR_CUR lv_color_hex(0xeab308)
-#define COLOR_TEMP_GREEN lv_color_hex(0x22c55e)
-#define COLOR_TEMP_YELLOW lv_color_hex(0xeab308)
-#define COLOR_TEMP_RED lv_color_hex(0xef4444)
-#define COLOR_TRQ lv_color_hex(0xa78bfa)
-
-// UI element colors
-#define COLOR_TEXT_DIM lv_color_hex(0x444444)
-#define COLOR_TEXT_MED lv_color_hex(0x555555)
-#define COLOR_CARD_BG lv_color_hex(0x000000)
-#define COLOR_PROGRESS_TRACK lv_color_hex(0x000000)
-
 // ============================= Metric Data ============================= //
 
 static const char *metric_labels[] = {"VEL", "PWR", "CUR", "TEMP", "TRQ"};
@@ -41,18 +21,18 @@ static const char *metric_units[] = {"RPM", "W", "A", "C", "Nm"};
 
 static lv_color_t get_metric_color(int metric_index) {
 	switch (metric_index) {
-		case 0: return COLOR_VEL;
-		case 1: return COLOR_PWR;
-		case 2: return COLOR_CUR;
-		case 4: return COLOR_TRQ;
-		default: return COLOR_VEL;
+		case 0: return color_motor_vel;
+		case 1: return color_motor_pwr;
+		case 2: return color_motor_cur;
+		case 4: return color_motor_trq;
+		default: return color_motor_vel;
 	}
 }
 
 static lv_color_t get_temp_color(float temp) {
-	if (temp > 55.0f) return COLOR_TEMP_RED;
-	if (temp > 45.0f) return COLOR_TEMP_YELLOW;
-	return COLOR_TEMP_GREEN;
+	if (temp > 55.0f) return color_motor_temp_red;
+	if (temp > 45.0f) return color_motor_temp_yellow;
+	return color_motor_temp_green;
 }
 
 static float get_metric_value(const rd::motor_data_t &data, int metric_index) {
@@ -118,6 +98,15 @@ rd::MotorTelemetry::MotorTelemetry(std::string name, const std::vector<std::tupl
 	this->has_stored_motors = false;
 	this->stored_groups = groups;
 	this->controller = controller;
+
+	for (const auto &[group, group_name] : groups) {
+		auto ports = group->get_port_all();
+		auto gears = group->get_gearing_all();
+		size_t n = ports.size() < gears.size() ? ports.size() : gears.size();
+		for (size_t i = 0; i < n; i++) {
+			expected_gearsets[std::abs(ports[i])] = static_cast<pros::motor_gearset_e_t>(gears[i]);
+		}
+	}
 	
 	// Count total motors from all groups
 	int total_motors = 0;
@@ -144,6 +133,10 @@ rd::MotorTelemetry::MotorTelemetry(std::string name, const std::vector<std::tupl
 	this->has_stored_motors = true;
 	this->stored_motors = motors;
 	this->controller = controller;
+
+	for (const auto &[motor, motor_name] : motors) {
+		expected_gearsets[std::abs(motor->get_port())] = static_cast<pros::motor_gearset_e_t>(motor->get_gearing());
+	}
 	
 	// Count motors
 	this->motor_count = motors.size() > 8 ? 8 : (motors.size() < 1 ? 1 : motors.size());
@@ -167,6 +160,19 @@ rd::MotorTelemetry::MotorTelemetry(std::string name, const std::vector<std::tupl
 	this->stored_groups = groups;
 	this->stored_motors = individual_motors;
 	this->controller = controller;
+
+	for (const auto &[group, group_name] : groups) {
+		auto ports = group->get_port_all();
+		auto gears = group->get_gearing_all();
+		size_t n = ports.size() < gears.size() ? ports.size() : gears.size();
+		for (size_t i = 0; i < n; i++) {
+			expected_gearsets[std::abs(ports[i])] = static_cast<pros::motor_gearset_e_t>(gears[i]);
+		}
+	}
+
+	for (const auto &[motor, motor_name] : individual_motors) {
+		expected_gearsets[std::abs(motor->get_port())] = static_cast<pros::motor_gearset_e_t>(motor->get_gearing());
+	}
 	
 	// Count total motors from both groups and individual motors
 	int total_motors = 0;
@@ -319,7 +325,7 @@ void rd::MotorTelemetry::init_motor_grid(int count) {
 void rd::MotorTelemetry::init_motor_card(int index, bool is_small) {
 	// Card container
 	lv_obj_t *card = lv_obj_create(motor_grid);
-	lv_obj_set_style_bg_color(card, COLOR_CARD_BG, 0);
+	lv_obj_set_style_bg_color(card, color_motor_card_bg, 0);
 	lv_obj_set_style_border_width(card, 1, 0);
 	lv_obj_set_style_border_color(card, color_border, 0);
 	lv_obj_set_style_radius(card, 4, 0); // Rounded corners
@@ -336,8 +342,8 @@ void rd::MotorTelemetry::init_motor_card(int index, bool is_small) {
 	lv_obj_set_pos(led, 6, 6);
 	lv_obj_set_style_radius(led, LV_RADIUS_CIRCLE, 0);
 	lv_obj_set_style_border_width(led, 0, 0);
-	lv_obj_set_style_bg_color(led, COLOR_TEMP_GREEN, 0);
-	lv_obj_set_style_shadow_color(led, COLOR_TEMP_GREEN, 0);
+	lv_obj_set_style_bg_color(led, color_motor_temp_green, 0);
+	lv_obj_set_style_shadow_color(led, color_motor_temp_green, 0);
 	lv_obj_set_style_shadow_width(led, 6, 0);
 	lv_obj_set_style_shadow_spread(led, 0, 0);
 	cards[index].status_led = led;
@@ -357,7 +363,7 @@ void rd::MotorTelemetry::init_motor_card(int index, bool is_small) {
 	lv_label_set_text(port_label, "P0 ---");
 	int port_font_size = is_small ? 10 : 13;
 	lv_obj_set_style_text_font(port_label, port_font_size <= 10 ? &lv_font_montserrat_10 : &lv_font_montserrat_14, 0);
-	lv_obj_set_style_text_color(port_label, COLOR_TEXT_MED, 0);
+	lv_obj_set_style_text_color(port_label, color_motor_text_med, 0);
 	cards[index].port_label = port_label;
 
 	// Value label (hero)
@@ -366,7 +372,7 @@ void rd::MotorTelemetry::init_motor_card(int index, bool is_small) {
 	int value_font_size = is_small ? 22 : 36;
 	const lv_font_t *value_font = is_small ? &lv_font_montserrat_24 : &lv_font_montserrat_36;
 	lv_obj_set_style_text_font(value_label, value_font, 0);
-	lv_obj_set_style_text_color(value_label, COLOR_VEL, 0);
+	lv_obj_set_style_text_color(value_label, color_motor_vel, 0);
 	lv_obj_set_style_text_align(value_label, LV_TEXT_ALIGN_CENTER, 0);
 	lv_obj_set_width(value_label, is_small ? 80 : 100); // Fixed width to prevent shifting
 	int value_margin = is_small ? 2 : 4;
@@ -378,7 +384,7 @@ void rd::MotorTelemetry::init_motor_card(int index, bool is_small) {
 	lv_label_set_text(unit_label, "RPM");
 	int unit_font_size = is_small ? 10 : 12;
 	lv_obj_set_style_text_font(unit_label, unit_font_size <= 10 ? &lv_font_montserrat_10 : &lv_font_montserrat_12, 0);
-	lv_obj_set_style_text_color(unit_label, COLOR_TEXT_DIM, 0);
+	lv_obj_set_style_text_color(unit_label, color_motor_text_dim, 0);
 	int unit_margin = is_small ? 1 : 3;
 	lv_obj_set_style_pad_top(unit_label, unit_margin, 0);
 	cards[index].unit_label = unit_label;
@@ -387,13 +393,13 @@ void rd::MotorTelemetry::init_motor_card(int index, bool is_small) {
 	lv_obj_t *bar = lv_bar_create(card);
 	lv_obj_set_size(bar, lv_pct(100), 3);
 	lv_obj_align(bar, LV_ALIGN_BOTTOM_MID, 0, 0);
-	lv_obj_set_style_bg_color(bar, COLOR_PROGRESS_TRACK, 0);
+	lv_obj_set_style_bg_color(bar, color_motor_progress_track, 0);
 	lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
 	lv_obj_set_style_border_width(bar, 0, 0);
 	lv_obj_set_style_radius(bar, 0, 0);
 	lv_bar_set_range(bar, 0, 100);
 	lv_bar_set_value(bar, 0, LV_ANIM_OFF);
-	lv_obj_set_style_bg_color(bar, COLOR_VEL, LV_PART_INDICATOR);
+	lv_obj_set_style_bg_color(bar, color_motor_vel, LV_PART_INDICATOR);
 	lv_obj_set_style_border_width(bar, 0, LV_PART_INDICATOR);
 	lv_obj_set_style_radius(bar, 0, LV_PART_INDICATOR);
 	lv_obj_set_style_anim_time(bar, 150, 0); // 150ms animation
@@ -431,7 +437,7 @@ void rd::MotorTelemetry::update_metric_display(int index, const motor_data_t &da
 	if (!data.connected) {
 		lv_label_set_text(cards[index].value_label, "--");
 		lv_label_set_text(cards[index].unit_label, "No Motor");
-		lv_obj_set_style_text_color(cards[index].value_label, COLOR_TEXT_DIM, 0);
+		lv_obj_set_style_text_color(cards[index].value_label, color_motor_text_dim, 0);
 		lv_bar_set_value(cards[index].progress_bar, 0, LV_ANIM_OFF);
 		return;
 	}
@@ -496,10 +502,10 @@ void rd::MotorTelemetry::update_card(int index, const motor_data_t &data, bool i
 
 	// Gray out if disconnected
 	if (!data.connected) {
-		lv_obj_set_style_bg_color(cards[index].status_led, COLOR_TEXT_DIM, 0);
+		lv_obj_set_style_bg_color(cards[index].status_led, color_motor_text_dim, 0);
 		lv_obj_set_style_shadow_width(cards[index].status_led, 0, 0);
 		lv_label_set_text(cards[index].value_label, "--");
-		lv_obj_set_style_text_color(cards[index].value_label, COLOR_TEXT_DIM, 0);
+		lv_obj_set_style_text_color(cards[index].value_label, color_motor_text_dim, 0);
 		lv_label_set_text(cards[index].unit_label, "No Motor");
 		lv_bar_set_value(cards[index].progress_bar, 0, LV_ANIM_OFF);
 		return;
@@ -517,7 +523,7 @@ void rd::MotorTelemetry::update_card(int index, const motor_data_t &data, bool i
 
 void rd::MotorTelemetry::update_metric_label() {
 	const char *metric_names[] = {"VELOCITY", "POWER", "CURRENT", "TEMPERATURE", "TORQUE"};
-	lv_color_t metric_colors[] = {COLOR_VEL, COLOR_PWR, COLOR_CUR, COLOR_TEMP_GREEN, COLOR_TRQ};
+	lv_color_t metric_colors[] = {color_motor_vel, color_motor_pwr, color_motor_cur, color_motor_temp_green, color_motor_trq};
 	
 	lv_label_set_text(metric_label, metric_names[active_metric]);
 	lv_obj_set_style_text_color(metric_label, metric_colors[active_metric], 0);
@@ -544,8 +550,19 @@ rd::motor_data_t rd::MotorTelemetry::build_motor_data(int8_t port, const char* n
 	uint32_t current_time = pros::millis();  // Current timestamp for grace period calculation
 	int8_t abs_port = std::abs(port);         // Absolute port number (ports can be negative for reversal)
 	
+	// Enforce configured gearset per-port so reconnects don't drift into wrong telemetry scaling.
+	pros::motor_gearset_e_t gearset = pros::c::motor_get_gearing(abs_port);
+	auto expected_it = expected_gearsets.find(abs_port);
+	if (expected_it != expected_gearsets.end() && gearset != expected_it->second) {
+		pros::c::motor_set_gearing(abs_port, expected_it->second);
+		gearset = expected_it->second;
+	}
+	int gear_idx = (int)gearset;
+	if (gear_idx < 0 || gear_idx > 2) gear_idx = 2;  // Clamp to valid range (default to blue)
+	
 	motor_data.port = abs_port;  // Store port number
 	motor_data.name = name;      // Store display name (e.g., "Left Front")
+	motor_data.gearing = gear_idx;
 	
 	// ==================== Connection Detection (2 out of 3 signals) ====================
 	// PROS motor API returns error codes when motor is disconnected or communication fails
@@ -563,23 +580,22 @@ rd::motor_data_t rd::MotorTelemetry::build_motor_data(int8_t port, const char* n
 	
 	// Count valid signals (require 2 out of 3 for connection)
 	int valid_count = (vel_valid ? 1 : 0) + (temp_valid ? 1 : 0) + (current_valid ? 1 : 0);
-	bool is_connected = (valid_count >= 2);  // 2 or 3 valid signals = motor is connected
+	bool raw_connected = (valid_count >= 2);  // 2 or 3 valid signals = motor is connected
+	bool is_connected = raw_connected;
 	
 	// ==================== Reconnect Grace Period ====================
 	// When motor reconnects, first few readings may be stale/invalid
 	// Grace period: ignore first 250ms of data after reconnection to avoid displaying garbage
 	auto &state = motor_states[abs_port];  // Track connection state per motor
-	bool just_reconnected = false;
 	
 	// Detect rising edge: was disconnected, now connected
-	if (is_connected && !state.was_connected) {
+	if (raw_connected && !state.was_connected_raw) {
 		state.reconnect_time_ms = current_time;  // Record reconnection time
-		just_reconnected = true;
 	}
-	state.was_connected = is_connected;  // Update state for next cycle
+	state.was_connected_raw = raw_connected;  // Update state for next cycle
 	
 	// If within grace period, treat as disconnected (prevents showing stale data)
-	if (just_reconnected && (current_time - state.reconnect_time_ms) < RECONNECT_GRACE_MS) {
+	if (raw_connected && (current_time - state.reconnect_time_ms) < RECONNECT_GRACE_MS) {
 		is_connected = false;  // Override connection status during grace period
 	}
 	
@@ -587,29 +603,25 @@ rd::motor_data_t rd::MotorTelemetry::build_motor_data(int8_t port, const char* n
 	
 	// ==================== Read Motor Metrics ====================
 	if (is_connected) {
-		// ==================== Gearset Detection ====================
-		// VEX V5 motors have 3 gearsets: 0=red/100RPM, 1=green/200RPM, 2=blue/600RPM
-		pros::motor_gearset_e_t gearset = pros::c::motor_get_gearing(abs_port);
-		int gear_idx = (int)gearset;
-		if (gear_idx < 0 || gear_idx > 2) gear_idx = 2;  // Clamp to valid range (default to blue)
-		motor_data.gearing = gear_idx;
-		
 		// ==================== Velocity (RPM) ====================
 		// Apply port reversal: negative port = reverse motor direction
-		float velocity = (float)raw_vel;
+		float velocity = vel_valid ? (float)raw_vel : 0.0f;
 		if (port < 0) velocity = -velocity;  // Flip sign for negative ports
 		
 		motor_data.velocity_rpm = velocity;  // Store RPM with correct sign
 		
 		// ==================== Other Metrics ====================
-		motor_data.power_w = (float)pros::c::motor_get_power(abs_port);        // Watts (instantaneous power)
-		motor_data.current_a = (float)(pros::c::motor_get_current_draw(abs_port) / 1000.0);  // Amps (convert mA to A)
-		motor_data.temp_c = (float)raw_temp;                                    // Celsius (motor temperature)
-		motor_data.torque_nm = (float)pros::c::motor_get_torque(abs_port);     // Newton-meters (instantaneous torque)
+		double raw_power = pros::c::motor_get_power(abs_port);
+		double raw_torque = pros::c::motor_get_torque(abs_port);
+		int32_t live_current_ma = pros::c::motor_get_current_draw(abs_port);
+
+		motor_data.power_w = (raw_power != PROS_ERR_F && std::isfinite(raw_power)) ? (float)raw_power : 0.0f;
+		motor_data.current_a = (live_current_ma != PROS_ERR) ? (float)(live_current_ma / 1000.0f) : 0.0f;
+		motor_data.temp_c = temp_valid ? (float)raw_temp : 0.0f;
+		motor_data.torque_nm = (raw_torque != PROS_ERR_F && std::isfinite(raw_torque)) ? (float)raw_torque : 0.0f;
 	} else {
 		// ==================== Disconnected State ====================
 		// Set all values to safe defaults (zero) when motor is not connected
-		motor_data.gearing = 2;         // Default to blue gearset (common choice)
 		motor_data.velocity_rpm = 0;
 		motor_data.power_w = 0;
 		motor_data.current_a = 0;

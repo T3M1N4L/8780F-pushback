@@ -110,6 +110,8 @@ class PIDTuner {
 
 	// Helper to get current PID values
 	PIDValues& get_current_values();
+	void sync_values_from_globals();
+	void sync_values_to_globals();
 	void apply_pid_to_chassis();
 
   public:

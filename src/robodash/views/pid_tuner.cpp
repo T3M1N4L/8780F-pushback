@@ -1,37 +1,13 @@
 #include "robodash/views/pid_tuner.hpp"
 #include "robodash/impl/styles.h"
 #include "robodash/core.h"
+#include "globals.h"
 #include <cmath>
 #include <new>
 
 // ============================= Constants ============================= //
 
 #define PI 3.14159265358979323846  // For angle calculations (if needed)
-
-// ============================= Color Palette ============================= //
-// Custom purple theme matching other robodash views
-
-#define COLOR_ACCENT lv_color_hex(0x9333ea)    // Purple accent (primary UI color)
-#define COLOR_ACCENT_DIM lv_color_hex(0x7c3aed)  // Dimmer purple for pressed states
-#define COLOR_TEXT_DIM lv_color_hex(0x444444)    // Dim gray for secondary text
-#define COLOR_TEXT_MED lv_color_hex(0x888888)    // Medium gray for labels
-#define COLOR_TEXT_BRIGHT lv_color_hex(0xffffff)  // White for primary text
-#define COLOR_CARD_BG lv_color_hex(0x000000)      // Black card backgrounds
-
-// Mode-specific colors (Lateral vs Angular PID)
-#define COLOR_LAT lv_color_hex(0x22c55e)       // Green for Lateral (forward/backward movement)
-#define COLOR_ANG lv_color_hex(0x0ea5e9)       // Blue for Angular (turning movement)
-
-// PID constant colors (for each row in editor)
-#define COLOR_KP lv_color_hex(0xa78bfa)        // Purple for kP (proportional gain)
-#define COLOR_KI lv_color_hex(0x0ea5e9)        // Blue for kI (integral gain)
-#define COLOR_KD lv_color_hex(0x22c55e)        // Green for kD (derivative gain)
-#define COLOR_WINDUP lv_color_hex(0xef4444)    // Red for anti-windup limit
-
-// Telemetry colors (position display)
-#define COLOR_X lv_color_hex(0xef4444)         // Red for X coordinate
-#define COLOR_Y lv_color_hex(0x22c55e)         // Green for Y coordinate
-#define COLOR_THETA lv_color_hex(0xa78bfa)     // Purple for heading
 
 // ============================= PID Tuner Constructor ============================= //
 // Creates interactive PID tuning interface with two modes: Lateral (forward/backward) and Angular (turning)
@@ -46,13 +22,11 @@ rd::PIDTuner::PIDTuner(std::string name, lemlib::Chassis* chassis, pros::Control
 	// ==================== Initialize PID Values ====================
 	// lat_values: {kP, kI, kD, anti_windup} for lateral (forward/backward) movement
 	// ang_values: {kP, kI, kD, anti_windup} for angular (turning) movement
-	lat_values = {0, 0, 0, 0};  // Default to zero (will be loaded from SD card if available)
-	ang_values = {0, 0, 0, 0};
+	sync_values_from_globals();
 	
 	// ==================== Tuner Mode ====================
-	// Default: use LemLib's default PID values (not tuner values)
-	// Set to true to override LemLib PID with tuner values
-	use_tuner_pid = false;
+	// Default to enabled so edits apply to the live chassis controllers.
+	use_tuner_pid = true;
 	
 	// ==================== Increment Sizes ====================
 	// Adjust PID values by these amounts per button press
@@ -65,6 +39,8 @@ rd::PIDTuner::PIDTuner(std::string name, lemlib::Chassis* chassis, pros::Control
 	// Try to load PID values from SD card file (S:/pid_values.txt)
 	// If file doesn't exist, values remain at 0
 	load_from_sd_card();
+	sync_values_to_globals();
+	apply_pid_to_chassis();
 
 	// ==================== UI Styling ====================
 	lv_obj_set_style_bg_color(view->obj, color_bg, 0);  // Dark background
@@ -113,18 +89,18 @@ void rd::PIDTuner::init_header() {
 
 	lat_test_btn = lv_btn_create(test_btn_container);
 	lv_obj_set_size(lat_test_btn, 92, 26);
-	lv_obj_set_style_bg_color(lat_test_btn, COLOR_CARD_BG, 0);
-	lv_obj_set_style_border_color(lat_test_btn, COLOR_LAT, 0);
+	lv_obj_set_style_bg_color(lat_test_btn, color_pid_card_bg, 0);
+	lv_obj_set_style_border_color(lat_test_btn, color_pid_lat, 0);
 	lv_obj_set_style_border_width(lat_test_btn, 1, 0);
 	lv_obj_set_style_radius(lat_test_btn, 4, 0);
 	lv_obj_set_style_shadow_width(lat_test_btn, 0, 0);
-	lv_obj_set_style_bg_color(lat_test_btn, COLOR_CARD_BG, LV_STATE_PRESSED);
+	lv_obj_set_style_bg_color(lat_test_btn, color_pid_card_bg, LV_STATE_PRESSED);
 	lv_obj_set_user_data(lat_test_btn, nullptr);
 	lv_obj_add_event_cb(lat_test_btn, test_run_cb, LV_EVENT_CLICKED, this);
 	test_btn_label = lv_label_create(lat_test_btn);
 	lv_label_set_text(test_btn_label, "FORWARD 48");
 	lv_obj_set_style_text_font(test_btn_label, &lv_font_montserrat_10, 0);
-	lv_obj_set_style_text_color(test_btn_label, COLOR_LAT, 0);
+	lv_obj_set_style_text_color(test_btn_label, color_pid_lat, 0);
 	lv_obj_center(test_btn_label);
 
 	// ==================== Tab Switcher Container ====================
@@ -144,36 +120,36 @@ void rd::PIDTuner::init_header() {
 	// Lateral button
 	mode_toggle_btn = lv_btn_create(tab_container);
 	lv_obj_set_size(mode_toggle_btn, 63, 26);
-	lv_obj_set_style_bg_color(mode_toggle_btn, COLOR_LAT, 0);
-	lv_obj_set_style_border_color(mode_toggle_btn, COLOR_LAT, 0);
+	lv_obj_set_style_bg_color(mode_toggle_btn, color_pid_lat, 0);
+	lv_obj_set_style_border_color(mode_toggle_btn, color_pid_lat, 0);
 	lv_obj_set_style_border_width(mode_toggle_btn, 1, 0);
 	lv_obj_set_style_radius(mode_toggle_btn, 4, 0);
 	lv_obj_set_style_shadow_width(mode_toggle_btn, 0, 0);
-	lv_obj_set_style_bg_color(mode_toggle_btn, COLOR_CARD_BG, LV_STATE_PRESSED);
+	lv_obj_set_style_bg_color(mode_toggle_btn, color_pid_card_bg, LV_STATE_PRESSED);
 	lv_obj_add_event_cb(mode_toggle_btn, mode_toggle_cb, LV_EVENT_CLICKED, this);
 
 	mode_toggle_label = lv_label_create(mode_toggle_btn);
 	lv_label_set_text(mode_toggle_label, "LAT");
 	lv_obj_set_style_text_font(mode_toggle_label, &lv_font_montserrat_12, 0);
-	lv_obj_set_style_text_color(mode_toggle_label, lv_color_hex(0x000000), 0);
+	lv_obj_set_style_text_color(mode_toggle_label, color_pid_active_text, 0);
 	lv_obj_center(mode_toggle_label);
 
 	// Angular button
 	lv_obj_t *ang_btn = lv_btn_create(tab_container);
 	lv_obj_set_size(ang_btn, 63, 26);
-	lv_obj_set_style_bg_color(ang_btn, COLOR_CARD_BG, 0);
+	lv_obj_set_style_bg_color(ang_btn, color_pid_card_bg, 0);
 	lv_obj_set_style_border_color(ang_btn, color_border, 0);
 	lv_obj_set_style_border_width(ang_btn, 1, 0);
 	lv_obj_set_style_radius(ang_btn, 4, 0);
 	lv_obj_set_style_shadow_width(ang_btn, 0, 0);
-	lv_obj_set_style_bg_color(ang_btn, COLOR_CARD_BG, LV_STATE_PRESSED);
+	lv_obj_set_style_bg_color(ang_btn, color_pid_card_bg, LV_STATE_PRESSED);
 	lv_obj_set_user_data(ang_btn, (void*)1); // Mark as angular button
 	lv_obj_add_event_cb(ang_btn, mode_toggle_cb, LV_EVENT_CLICKED, this);
 
 	lv_obj_t *ang_label = lv_label_create(ang_btn);
 	lv_label_set_text(ang_label, "ANG");
 	lv_obj_set_style_text_font(ang_label, &lv_font_montserrat_12, 0);
-	lv_obj_set_style_text_color(ang_label, COLOR_TEXT_MED, 0);
+	lv_obj_set_style_text_color(ang_label, color_pid_text_med, 0);
 	lv_obj_center(ang_label);
 }
 
@@ -198,7 +174,7 @@ void rd::PIDTuner::init_main_panels() {
 	// Left panel (PID editor) - 230px width
 	left_panel = lv_obj_create(main_container);
 	lv_obj_set_size(left_panel, 230, LV_PCT(100));
-	lv_obj_set_style_bg_color(left_panel, COLOR_CARD_BG, 0);
+	lv_obj_set_style_bg_color(left_panel, color_pid_card_bg, 0);
 	lv_obj_set_style_border_color(left_panel, color_border, 0);
 	lv_obj_set_style_border_width(left_panel, 1, 0);
 	lv_obj_set_style_radius(left_panel, 4, 0);
@@ -208,7 +184,7 @@ void rd::PIDTuner::init_main_panels() {
 	// Right panel (telemetry) - 226px width (480 - 16 padding - 230 - 8 gap = 226)
 	right_panel = lv_obj_create(main_container);
 	lv_obj_set_size(right_panel, 226, LV_PCT(100));
-	lv_obj_set_style_bg_color(right_panel, COLOR_CARD_BG, 0);
+	lv_obj_set_style_bg_color(right_panel, color_pid_card_bg, 0);
 	lv_obj_set_style_border_color(right_panel, color_border, 0);
 	lv_obj_set_style_border_width(right_panel, 1, 0);
 	lv_obj_set_style_radius(right_panel, 4, 0);
@@ -225,7 +201,7 @@ void rd::PIDTuner::init_main_panels() {
 
 void rd::PIDTuner::init_pid_editor() {
 	const char* labels[] = {"kP", "kI", "kD", "Aw"};
-	lv_color_t label_colors[] = {COLOR_KP, COLOR_KI, COLOR_KD, COLOR_WINDUP};
+	lv_color_t label_colors[] = {color_pid_kp, color_pid_ki, color_pid_kd, color_pid_windup};
 	
 	// Use flex layout for vertical stacking
 	lv_obj_set_layout(left_panel, LV_LAYOUT_FLEX);
@@ -257,7 +233,7 @@ void rd::PIDTuner::init_pid_editor() {
 		// Minus button - white
 		pid_rows[i].minus_btn = lv_btn_create(pid_rows[i].container);
 		lv_obj_set_size(pid_rows[i].minus_btn, 32, 32);
-		lv_obj_set_style_bg_color(pid_rows[i].minus_btn, COLOR_CARD_BG, 0);
+		lv_obj_set_style_bg_color(pid_rows[i].minus_btn, color_pid_card_bg, 0);
 		lv_obj_set_style_border_color(pid_rows[i].minus_btn, color_border, 0);
 		lv_obj_set_style_border_width(pid_rows[i].minus_btn, 1, 0);
 		lv_obj_set_style_radius(pid_rows[i].minus_btn, 4, 0);
@@ -271,7 +247,7 @@ void rd::PIDTuner::init_pid_editor() {
 		lv_obj_t *minus_label = lv_label_create(pid_rows[i].minus_btn);
 		lv_label_set_text(minus_label, LV_SYMBOL_MINUS);
 		lv_obj_set_style_text_font(minus_label, &lv_font_montserrat_14, 0);
-		lv_obj_set_style_text_color(minus_label, COLOR_TEXT_BRIGHT, 0);
+		lv_obj_set_style_text_color(minus_label, color_pid_text_bright, 0);
 		lv_obj_set_style_pad_left(pid_rows[i].minus_btn, 6, 0);
 		lv_obj_set_style_pad_right(pid_rows[i].minus_btn, 6, 0);
 		lv_obj_set_style_pad_top(pid_rows[i].minus_btn, 6, 0);
@@ -283,13 +259,13 @@ void rd::PIDTuner::init_pid_editor() {
 		lv_label_set_text(pid_rows[i].value_label, "0.000");
 		lv_obj_set_width(pid_rows[i].value_label, 60);
 		lv_obj_set_style_text_font(pid_rows[i].value_label, &lv_font_montserrat_14, 0);
-		lv_obj_set_style_text_color(pid_rows[i].value_label, COLOR_TEXT_BRIGHT, 0);
+		lv_obj_set_style_text_color(pid_rows[i].value_label, color_pid_text_bright, 0);
 		lv_obj_set_style_text_align(pid_rows[i].value_label, LV_TEXT_ALIGN_CENTER, 0);
 
 		// Plus button - white
 		pid_rows[i].plus_btn = lv_btn_create(pid_rows[i].container);
 		lv_obj_set_size(pid_rows[i].plus_btn, 32, 32);
-		lv_obj_set_style_bg_color(pid_rows[i].plus_btn, COLOR_CARD_BG, 0);
+		lv_obj_set_style_bg_color(pid_rows[i].plus_btn, color_pid_card_bg, 0);
 		lv_obj_set_style_border_color(pid_rows[i].plus_btn, color_border, 0);
 		lv_obj_set_style_border_width(pid_rows[i].plus_btn, 1, 0);
 		lv_obj_set_style_radius(pid_rows[i].plus_btn, 4, 0);
@@ -303,7 +279,7 @@ void rd::PIDTuner::init_pid_editor() {
 		lv_obj_t *plus_label = lv_label_create(pid_rows[i].plus_btn);
 		lv_label_set_text(plus_label, LV_SYMBOL_PLUS);
 		lv_obj_set_style_text_font(plus_label, &lv_font_montserrat_14, 0);
-		lv_obj_set_style_text_color(plus_label, COLOR_TEXT_BRIGHT, 0);
+		lv_obj_set_style_text_color(plus_label, color_pid_text_bright, 0);
 		lv_obj_set_style_pad_left(pid_rows[i].plus_btn, 6, 0);
 		lv_obj_set_style_pad_right(pid_rows[i].plus_btn, 6, 0);
 		lv_obj_set_style_pad_top(pid_rows[i].plus_btn, 6, 0);
@@ -334,13 +310,13 @@ void rd::PIDTuner::init_telemetry_panel() {
 	x_label = lv_label_create(position_box);
 	lv_label_set_text(x_label, "X: 0.000");
 	lv_obj_set_style_text_font(x_label, &lv_font_montserrat_14, 0);
-	lv_obj_set_style_text_color(x_label, COLOR_X, 0);
+	lv_obj_set_style_text_color(x_label, color_position_x, 0);
 
 	// Y label
 	y_label = lv_label_create(position_box);
 	lv_label_set_text(y_label, "Y: 0.000");
 	lv_obj_set_style_text_font(y_label, &lv_font_montserrat_14, 0);
-	lv_obj_set_style_text_color(y_label, COLOR_Y, 0);
+	lv_obj_set_style_text_color(y_label, color_position_y, 0);
 
 	// Container for heading box and tachometer (side by side)
 	lv_obj_t *heading_tacho_container = lv_obj_create(right_panel);
@@ -370,13 +346,13 @@ void rd::PIDTuner::init_telemetry_panel() {
 	theta_label = lv_label_create(heading_box);
 	lv_label_set_text(theta_label, "0.00");
 	lv_obj_set_style_text_font(theta_label, &lv_font_montserrat_24, 0);
-	lv_obj_set_style_text_color(theta_label, COLOR_THETA, 0);
+	lv_obj_set_style_text_color(theta_label, color_position_theta, 0);
 
 	// Small "deg" unit
 	theta_unit = lv_label_create(heading_box);
 	lv_label_set_text(theta_unit, "deg");
 	lv_obj_set_style_text_font(theta_unit, &lv_font_montserrat_10, 0);
-	lv_obj_set_style_text_color(theta_unit, COLOR_TEXT_MED, 0);
+	lv_obj_set_style_text_color(theta_unit, color_pid_text_med, 0);
 
 	// Tachometer (100x100 canvas) - right side
 	init_tachometer();
@@ -432,7 +408,7 @@ void rd::PIDTuner::draw_tachometer(float theta) {
 	// Draw center dot
 	lv_draw_rect_dsc_t dot_dsc;
 	lv_draw_rect_dsc_init(&dot_dsc);
-	dot_dsc.bg_color = COLOR_THETA;
+	dot_dsc.bg_color = color_position_theta;
 	dot_dsc.bg_opa = LV_OPA_COVER;
 	dot_dsc.border_width = 0;
 	dot_dsc.radius = 3;
@@ -448,7 +424,7 @@ void rd::PIDTuner::draw_tachometer(float theta) {
 	
 	lv_draw_line_dsc_t line_dsc;
 	lv_draw_line_dsc_init(&line_dsc);
-	line_dsc.color = COLOR_THETA;
+	line_dsc.color = color_position_theta;
 	line_dsc.width = 2;
 	line_dsc.opa = LV_OPA_COVER;
 	
@@ -471,38 +447,38 @@ void rd::PIDTuner::update_mode_toggle() {
 	
 	if (current_mode == LAT) {
 		// Highlight LAT button
-		lv_obj_set_style_bg_color(lat_btn, COLOR_LAT, 0);
-		lv_obj_set_style_border_color(lat_btn, COLOR_LAT, 0);
+		lv_obj_set_style_bg_color(lat_btn, color_pid_lat, 0);
+		lv_obj_set_style_border_color(lat_btn, color_pid_lat, 0);
 		lv_obj_t *lat_label = lv_obj_get_child(lat_btn, 0);
-		lv_obj_set_style_text_color(lat_label, lv_color_hex(0x000000), 0);
+		lv_obj_set_style_text_color(lat_label, color_pid_active_text, 0);
 		
 		// Dim ANG button
-		lv_obj_set_style_bg_color(ang_btn, COLOR_CARD_BG, 0);
+		lv_obj_set_style_bg_color(ang_btn, color_pid_card_bg, 0);
 		lv_obj_set_style_border_color(ang_btn, color_border, 0);
 		lv_obj_t *ang_label = lv_obj_get_child(ang_btn, 0);
-		lv_obj_set_style_text_color(ang_label, COLOR_TEXT_MED, 0);
+		lv_obj_set_style_text_color(ang_label, color_pid_text_med, 0);
 
 		// Update test button for lateral test
-		lv_obj_set_style_border_color(lat_test_btn, COLOR_LAT, 0);
+		lv_obj_set_style_border_color(lat_test_btn, color_pid_lat, 0);
 		lv_label_set_text(test_btn_label, "FORWARD 48");
-		lv_obj_set_style_text_color(test_btn_label, COLOR_LAT, 0);
+		lv_obj_set_style_text_color(test_btn_label, color_pid_lat, 0);
 	} else {
 		// Dim LAT button
-		lv_obj_set_style_bg_color(lat_btn, COLOR_CARD_BG, 0);
+		lv_obj_set_style_bg_color(lat_btn, color_pid_card_bg, 0);
 		lv_obj_set_style_border_color(lat_btn, color_border, 0);
 		lv_obj_t *lat_label = lv_obj_get_child(lat_btn, 0);
-		lv_obj_set_style_text_color(lat_label, COLOR_TEXT_MED, 0);
+		lv_obj_set_style_text_color(lat_label, color_pid_text_med, 0);
 		
 		// Highlight ANG button
-		lv_obj_set_style_bg_color(ang_btn, COLOR_ANG, 0);
-		lv_obj_set_style_border_color(ang_btn, COLOR_ANG, 0);
+		lv_obj_set_style_bg_color(ang_btn, color_pid_ang, 0);
+		lv_obj_set_style_border_color(ang_btn, color_pid_ang, 0);
 		lv_obj_t *ang_label = lv_obj_get_child(ang_btn, 0);
-		lv_obj_set_style_text_color(ang_label, lv_color_hex(0x000000), 0);
+		lv_obj_set_style_text_color(ang_label, color_pid_active_text, 0);
 
 		// Update test button for angular test
-		lv_obj_set_style_border_color(lat_test_btn, COLOR_ANG, 0);
+		lv_obj_set_style_border_color(lat_test_btn, color_pid_ang, 0);
 		lv_label_set_text(test_btn_label, "TURN 180");
-		lv_obj_set_style_text_color(test_btn_label, COLOR_ANG, 0);
+		lv_obj_set_style_text_color(test_btn_label, color_pid_ang, 0);
 	}
 	update_pid_displays();
 }
@@ -544,12 +520,12 @@ void rd::PIDTuner::update_telemetry() {
 	// X label with red color
 	snprintf(buf, sizeof(buf), "X: %.3f", pose.x);
 	lv_label_set_text(x_label, buf);
-	lv_obj_set_style_text_color(x_label, COLOR_X, 0);
+	lv_obj_set_style_text_color(x_label, color_position_x, 0);
 	
 	// Y label with green color
 	snprintf(buf, sizeof(buf), "Y: %.3f", pose.y);
 	lv_label_set_text(y_label, buf);
-	lv_obj_set_style_text_color(y_label, COLOR_Y, 0);
+	lv_obj_set_style_text_color(y_label, color_position_y, 0);
 	
 	// Update heading (2 decimals) - purple already set in init
 	snprintf(buf, sizeof(buf), "%.2f", pose.theta);
@@ -620,6 +596,8 @@ void rd::PIDTuner::pid_adjust_cb(lv_event_t *event) {
 		// Clamp to non-negative
 		if (*value_ptr < 0) *value_ptr = 0;
 	}
+
+	screen->sync_values_to_globals();
 	
 	screen->update_pid_displays();
 	screen->apply_pid_to_chassis();
@@ -635,6 +613,30 @@ void rd::PIDTuner::test_run_cb(lv_event_t *event) {
 
 rd::PIDTuner::PIDValues& rd::PIDTuner::get_current_values() {
 	return (current_mode == LAT) ? lat_values : ang_values;
+}
+
+void rd::PIDTuner::sync_values_from_globals() {
+	lat_values.kP = lateral_controller.kP;
+	lat_values.kI = lateral_controller.kI;
+	lat_values.kD = lateral_controller.kD;
+	lat_values.windupRange = lateral_controller.windupRange;
+
+	ang_values.kP = angular_controller.kP;
+	ang_values.kI = angular_controller.kI;
+	ang_values.kD = angular_controller.kD;
+	ang_values.windupRange = angular_controller.windupRange;
+}
+
+void rd::PIDTuner::sync_values_to_globals() {
+	lateral_controller.kP = lat_values.kP;
+	lateral_controller.kI = lat_values.kI;
+	lateral_controller.kD = lat_values.kD;
+	lateral_controller.windupRange = lat_values.windupRange;
+
+	angular_controller.kP = ang_values.kP;
+	angular_controller.kI = ang_values.kI;
+	angular_controller.kD = ang_values.kD;
+	angular_controller.windupRange = ang_values.windupRange;
 }
 
 void rd::PIDTuner::run_test_for_mode(Mode mode) {
@@ -657,18 +659,17 @@ void rd::PIDTuner::run_selected_test() {
 void rd::PIDTuner::apply_pid_to_chassis() {
 	if (!chassis) return;
 	
-	// Only apply PID tuner values when use_tuner_pid is true
-	// When false, don't touch the chassis PID (leave lemlib defaults)
+	// Only apply PID values to the live chassis when enabled.
 	if (!use_tuner_pid) return;
 	
-	// Apply tuner PID values to chassis
+	// Rebuild live chassis PID from shared global controller settings.
 	chassis->lateralPID.~PID();
-	new (&chassis->lateralPID) lemlib::PID(lat_values.kP, lat_values.kI, 
-	                                        lat_values.kD, lat_values.windupRange);
+	new (&chassis->lateralPID) lemlib::PID(lateral_controller.kP, lateral_controller.kI,
+	                                        lateral_controller.kD, lateral_controller.windupRange);
 	
 	chassis->angularPID.~PID();
-	new (&chassis->angularPID) lemlib::PID(ang_values.kP, ang_values.kI,
-	                                        ang_values.kD, ang_values.windupRange);
+	new (&chassis->angularPID) lemlib::PID(angular_controller.kP, angular_controller.kI,
+	                                        angular_controller.kD, angular_controller.windupRange);
 }
 
 void rd::PIDTuner::save_to_sd_card() {
@@ -699,6 +700,7 @@ void rd::PIDTuner::load_from_sd_card() {
 	       &ang_values.kP, &ang_values.kI, &ang_values.kD, &ang_values.windupRange);
 	
 	fclose(file);
+	sync_values_to_globals();
 }
 
 // ============================= Public Methods ============================= //
@@ -708,9 +710,10 @@ void rd::PIDTuner::set_lateral_pid(float kP, float kI, float kD, float windupRan
 	lat_values.kI = kI;
 	lat_values.kD = kD;
 	lat_values.windupRange = windupRange;
+	sync_values_to_globals();
 	
 	update_pid_displays();
-	// Don't apply to chassis here - only apply when use_tuner_pid is enabled
+	apply_pid_to_chassis();
 }
 
 void rd::PIDTuner::set_angular_pid(float kP, float kI, float kD, float windupRange) {
@@ -718,9 +721,10 @@ void rd::PIDTuner::set_angular_pid(float kP, float kI, float kD, float windupRan
 	ang_values.kI = kI;
 	ang_values.kD = kD;
 	ang_values.windupRange = windupRange;
+	sync_values_to_globals();
 	
 	update_pid_displays();
-	// Don't apply to chassis here - only apply when use_tuner_pid is enabled
+	apply_pid_to_chassis();
 }
 
 void rd::PIDTuner::set_increments(float p, float i, float d, float windup) {
@@ -741,7 +745,7 @@ bool rd::PIDTuner::get_use_tuner_pid() {
 
 void rd::PIDTuner::update_row_highlight() {
 	// Corresponding colors for each row: kP, kI, kD, Windup
-	lv_color_t row_colors[] = {COLOR_KP, COLOR_KI, COLOR_KD, COLOR_WINDUP};
+	lv_color_t row_colors[] = {color_pid_kp, color_pid_ki, color_pid_kd, color_pid_windup};
 	
 	for (int i = 0; i < 4; i++) {
 		if (i == selected_row) {
@@ -805,6 +809,8 @@ void rd::PIDTuner::handle_controller_input() {
 				values->windupRange += windup_increment;
 				break;
 		}
+
+		sync_values_to_globals();
 		
 		update_pid_displays();
 		apply_pid_to_chassis();
@@ -833,6 +839,8 @@ void rd::PIDTuner::handle_controller_input() {
 				if (values->windupRange < 0) values->windupRange = 0;
 				break;
 		}
+
+		sync_values_to_globals();
 		
 		update_pid_displays();
 		apply_pid_to_chassis();

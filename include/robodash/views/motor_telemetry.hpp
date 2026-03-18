@@ -86,10 +86,11 @@ class MotorTelemetry {
 	
 	// Connection state tracking for grace period
 	struct MotorConnectionState {
-		bool was_connected;
+		bool was_connected_raw;
 		uint32_t reconnect_time_ms;
 	};
 	std::map<int8_t, MotorConnectionState> motor_states;
+	std::map<int8_t, pros::motor_gearset_e_t> expected_gearsets;
 
 	// Initialize UI
 	void init_header();

@@ -34,6 +34,59 @@ extern lv_color_t color_bar;
 extern lv_color_t color_bar_dark;
 extern lv_color_t color_bar_outline;
 
+extern lv_color_t color_selector_screen_bg;
+extern lv_color_t color_selector_panel_bg;
+extern lv_color_t color_selector_divider;
+extern lv_color_t color_selector_card_border;
+extern lv_color_t color_selector_inactive_border;
+extern lv_color_t color_selector_selected_text;
+extern lv_color_t color_selector_unselected_name;
+extern lv_color_t color_selector_selected_sub;
+extern lv_color_t color_selector_unselected_sub;
+extern lv_color_t color_selector_section_header;
+extern lv_color_t color_selector_disabled_icon;
+extern lv_color_t color_selector_red;
+extern lv_color_t color_selector_blue;
+extern lv_color_t color_selector_green;
+extern lv_color_t color_selector_amber;
+extern lv_color_t color_selector_idle;
+extern lv_color_t color_selector_dark_btn_bg;
+extern lv_color_t color_selector_card_bg;
+extern lv_color_t color_selector_disabled_border;
+extern lv_color_t color_selector_inactive_text;
+
+extern lv_color_t color_position_accent;
+extern lv_color_t color_position_text_dim;
+extern lv_color_t color_position_text_med;
+extern lv_color_t color_position_text_bright;
+extern lv_color_t color_position_x;
+extern lv_color_t color_position_y;
+extern lv_color_t color_position_theta;
+
+extern lv_color_t color_pid_text_dim;
+extern lv_color_t color_pid_text_med;
+extern lv_color_t color_pid_text_bright;
+extern lv_color_t color_pid_card_bg;
+extern lv_color_t color_pid_lat;
+extern lv_color_t color_pid_ang;
+extern lv_color_t color_pid_kp;
+extern lv_color_t color_pid_ki;
+extern lv_color_t color_pid_kd;
+extern lv_color_t color_pid_windup;
+extern lv_color_t color_pid_active_text;
+
+extern lv_color_t color_motor_vel;
+extern lv_color_t color_motor_pwr;
+extern lv_color_t color_motor_cur;
+extern lv_color_t color_motor_temp_green;
+extern lv_color_t color_motor_temp_yellow;
+extern lv_color_t color_motor_temp_red;
+extern lv_color_t color_motor_trq;
+extern lv_color_t color_motor_text_dim;
+extern lv_color_t color_motor_text_med;
+extern lv_color_t color_motor_card_bg;
+extern lv_color_t color_motor_progress_track;
+
 extern void _init_colors();
 
 // ============================= Miscellaneous ============================= //

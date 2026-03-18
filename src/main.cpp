@@ -18,9 +18,6 @@ rd::Selector selector({
 // Create image widget
 rd::Image teamLogo("/img/gengy.bin", "Gengar");
 
-// Create position display view
-rd::Position position(&chassis, {"skills.bin", "match.bin"}, {"Skills", "Match"}, &controller);
-
 // Create motor telemetry screen with motor groups and individual motors
 // Automatically displays all motors from groups plus individual motors
 std::vector<std::tuple<pros::MotorGroup*, const char*>> motor_groups = {
@@ -60,9 +57,8 @@ void initialize() {
     
     // ============================= PID Tuner Mode ============================= //
     // Toggle between PID tuner values and lemlib defaults
-    // When TRUE: PID tuner applies its values to the chassis (saved to SD card)
-    // When FALSE: PID tuner does NOT touch chassis PID (uses lemlib defaults from above)
-    pidTuner.set_use_tuner_pid(false);  // Set to false to use lemlib defaults
+    // Keep enabled so tuner edits update the shared global controller settings and live chassis PID.
+    pidTuner.set_use_tuner_pid(true);
     
     console.println("Robot initialized successfully!");
 
@@ -96,14 +92,6 @@ void initialize() {
         while (true) {
             pidTuner.update();
             pros::delay(100); // Update every 100ms
-        }
-    });
-    
-    // Background task to update position display
-    pros::Task positionTask([&]() {
-        while (true) {
-            position.update();
-            pros::delay(50); // Update every 50ms
         }
     });
     
