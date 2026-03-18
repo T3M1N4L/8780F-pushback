@@ -12,6 +12,7 @@ rd::Console console("Console", &controller);
 rd::Selector selector({
     {"Angular Test Auton", angular_test_auton, "", 60, "Heading turn diagnostic", 15000, "angular_test"},
     {"Lateral Test Auton", lateral_test_auton, "", 300, "Linear drive diagnostic", 15000, "lateral_test"},
+    {"Measure Offsets", measure_offsets, "", 60, "Calibrate tracking wheel offsets", 15000, "measure_offsets"},
     {"Skills Auton", skills_auton, "", 180, "Full skills run", 60000, "skills"},
 }, &controller);
 
